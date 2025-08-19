@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -13,9 +13,11 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.2.0",
     "@mui/material": "^7.2.0",
+    "axios": "^1.11.0",
     "lucide-react": "^0.536.0",
     "material-symbols": "^0.33.0",
     "next": "15.4.5",
+    "ogl": "^1.0.11",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

@@ -1,8 +1,7 @@
-// src/pages/inventario/bolsos/index.tsx
 import AppLayout from "@/components/layout/AppLayout";
 import Table2 from "@/components/ui/table2";
 import Modal from "@/components/ui/Modal";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Qwitcher_Grypen } from "next/font/google";
 import {
   Bolso as BolsoRow,
@@ -68,6 +67,27 @@ export default function InventarioBolsos() {
   const [qtyFilter, setQtyFilter] = useState<"" | "con" | "sin">("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const filtersBtnRef = useRef<HTMLButtonElement | null>(null);
+  const filtersPopRef = useRef<HTMLDivElement | null>(null);
+
+  // Cerrar filtros al hacer click fuera
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        filtersPopRef.current &&
+        !filtersPopRef.current.contains(target) &&
+        filtersBtnRef.current &&
+        !filtersBtnRef.current.contains(target)
+      ) {
+        setFiltersOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [filtersOpen]);
+
   const activeFiltersCount = useMemo(() => {
     let n = 0;
     if (colorFilter) n++;
@@ -120,28 +140,49 @@ export default function InventarioBolsos() {
     setQtyFilter("");
   };
 
-  // --- Modal (crear/editar)
+  // --- Modal (crear/editar) con "" para numericos
   const [openModal, setOpenModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<BolsoRow>({
+  const [form, setForm] = useState<{
+    id: string;
+    nombre: string;
+    color: string;
+    precio: number | "";
+    observaciones: string | "";
+    cantidad: number | "";
+  }>({
     id: "" as string,
     nombre: "",
     color: "",
-    precio: 0,
+    precio: "" as "",
     observaciones: "",
-    cantidad: 0,
+    cantidad: "" as "",
   });
 
   function openCreate() {
     setEditMode(false);
-    setForm({ id: "" as string, nombre: "", color: "", precio: 0, observaciones: "", cantidad: 0 });
+    setForm({
+      id: "" as string,
+      nombre: "",
+      color: "",
+      precio: "" as "",
+      observaciones: "",
+      cantidad: "" as "",
+    });
     setOpenModal(true);
   }
 
   function openEdit(row: BolsoRow) {
     setEditMode(true);
-    setForm({ ...row });
+    setForm({
+      id: String(row.id),
+      nombre: row.nombre ?? "",
+      color: row.color ?? "",
+      precio: (row.precio ?? 0) as number,
+      observaciones: (row.observaciones ?? "") as string,
+      cantidad: (row.cantidad ?? 0) as number,
+    });
     setOpenModal(true);
   }
 
@@ -167,17 +208,26 @@ export default function InventarioBolsos() {
     if (saving) return;
     setSaving(true);
     try {
+      if (form.precio === "" || isNaN(Number(form.precio))) {
+        alert("El precio es obligatorio.");
+        setSaving(false);
+        return;
+      }
+      if (form.cantidad === "" || isNaN(Number(form.cantidad))) {
+        alert("La cantidad es obligatoria.");
+        setSaving(false);
+        return;
+      }
+
       if (editMode) {
-        // PATCH /bolsos/:id
         const updated = await updateBolso(String(form.id), {
           nombre: form.nombre,
           color: form.color,
-          precio: form.precio,
-          observaciones: form.observaciones ?? "",
-          cantidad: form.cantidad,
+          precio: Number(form.precio),
+          observaciones: form.observaciones || "",
+          cantidad: Number(form.cantidad),
         });
 
-        // Actualiza la colección base (no 'filtered')
         setBolsos((prev) =>
           prev.map((b) => (String(b.id) === String(updated.id) ? updated : b))
         );
@@ -196,9 +246,9 @@ export default function InventarioBolsos() {
           id: String(form.id),
           nombre: form.nombre,
           color: form.color,
-          precio: form.precio,
-          observaciones: form.observaciones ?? "",
-          cantidad: form.cantidad,
+          precio: Number(form.precio),
+          observaciones: form.observaciones || "",
+          cantidad: Number(form.cantidad),
         });
         setBolsos((prev) => [created, ...prev]);
       }
@@ -214,16 +264,16 @@ export default function InventarioBolsos() {
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto px-4 py-6">
-        {/* Título centrado con Qwitcher Grypen */}
+        {/* Título centrado con Qwitcher Grypen (más grande en móvil) */}
         <div className="mb-6 flex items-center justify-center">
           <h1
-            className={`${qwitcher.className} text-[#e0a200] text-4xl sm:text-8xl leading-none text-center`}
+            className={`${qwitcher.className} text-[#e0a200] text-6xl sm:text-8xl leading-none text-center`}
           >
             Bolsos
           </h1>
         </div>
 
-        {/* Acciones superiores */}
+        {/* Acciones superiores (sin tocar layout desktop) */}
         <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-center">
           {/* Nuevo */}
           <div>
@@ -252,6 +302,7 @@ export default function InventarioBolsos() {
           <div className="sm:justify-self-end">
             <div className="relative inline-block">
               <button
+                ref={filtersBtnRef}
                 onClick={() => setFiltersOpen((o) => !o)}
                 className="h-10 px-4 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 transition flex items-center gap-2"
                 aria-expanded={filtersOpen}
@@ -267,83 +318,90 @@ export default function InventarioBolsos() {
               </button>
 
               {filtersOpen && (
-                <div
-                  id="filters-popover"
-                  className="absolute right-0 mt-2 z-30 w-[min(92vw,480px)] sm:w-[480px]
-                             bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30
-                             shadow-[0_2px_10px_rgba(255,234,7,0.08)] rounded-md p-3"
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Color */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[#c2b48d] w-20">Color</span>
-                      <select
-                        value={colorFilter}
-                        onChange={(e) => setColorFilter(e.target.value)}
-                        className="h-10 flex-1 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
-                      >
-                        <option value="">Todos</option>
-                        {distinctColors.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+  <div
+    ref={filtersPopRef}
+    id="filters-popover"
+    // 🧩 En mobile: fixed y centrado; en sm+: absolute anclado al botón (right-0)
+    className="
+      fixed left-1/2 -translate-x-1/2 top-[88px]   /* debajo del navbar en mobile */
+      sm:absolute sm:top-auto sm:right-0 sm:left-auto sm:translate-x-0 sm:mt-2
+      z-50
+      w-[min(96vw,480px)] sm:w-[480px]
+      max-h-[80vh] overflow-auto
+      bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30
+      shadow-[0_2px_10px_rgba(255,234,7,0.08)] rounded-md p-3
+    "
+  >
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {/* Color */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-sm text-[#c2b48d] w-20 shrink-0">Color</span>
+        <select
+          value={colorFilter}
+          onChange={(e) => setColorFilter(e.target.value)}
+          className="h-10 flex-1 min-w-0 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
+        >
+          <option value="">Todos</option>
+          {distinctColors.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      </div>
 
-                    {/* Cantidad */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[#c2b48d] w-20">Cantidad</span>
-                      <select
-                        value={qtyFilter}
-                        onChange={(e) => setQtyFilter(e.target.value as "" | "con" | "sin")}
-                        className="h-10 flex-1 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
-                      >
-                        <option value="">Todos</option>
-                        <option value="con">Con existencias (&gt; 0)</option>
-                        <option value="sin">Sin existencias (= 0)</option>
-                      </select>
-                    </div>
+      {/* Cantidad */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-sm text-[#c2b48d] w-20 shrink-0">Cantidad</span>
+        <select
+          value={qtyFilter}
+          onChange={(e) => setQtyFilter(e.target.value as "" | "con" | "sin")}
+          className="h-10 flex-1 min-w-0 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
+        >
+          <option value="">Todos</option>
+          <option value="con">Con existencias (&gt; 0)</option>
+          <option value="sin">Sin existencias (= 0)</option>
+        </select>
+      </div>
 
-                    {/* Precio */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[#c2b48d] w-20">Precio</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={minPrice}
-                        onChange={(e) => setMinPrice(e.target.value)}
-                        placeholder="min"
-                        className="h-10 w-28 flex-none rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
-                      />
-                      <span className="text-[#c2b48d]">—</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={maxPrice}
-                        onChange={(e) => setMaxPrice(e.target.value)}
-                        placeholder="max"
-                        className="h-10 w-28 flex-none rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
-                      />
-                    </div>
-                  </div>
+      {/* Precio */}
+      <div className="flex flex-wrap items-center gap-2 min-w-0 sm:col-span-2">
+        <span className="text-sm text-[#c2b48d] w-20 shrink-0">Precio</span>
+        <input
+          type="number"
+          min={0}
+          value={minPrice}
+          onChange={(e) => setMinPrice(e.target.value)}
+          placeholder="min"
+          className="h-10 w-28 flex-none rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
+        />
+        <span className="text-[#c2b48d]">—</span>
+        <input
+          type="number"
+          min={0}
+          value={maxPrice}
+          onChange={(e) => setMaxPrice(e.target.value)}
+          placeholder="max"
+          className="h-10 w-28 flex-none rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
+        />
 
-                  <div className="mt-3 flex items-center justify-between">
-                    <button
-                      onClick={clearFilters}
-                      className="h-10 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 transition"
-                    >
-                      Limpiar
-                    </button>
-                    <button
-                      onClick={() => setFiltersOpen(false)}
-                      className="h-10 px-4 rounded-md bg-[#e0a200]/20 text-[#e0a200] hover:bg-[#e0a200]/30 border border-[#e0a200]/30 transition"
-                    >
-                      Listo
-                    </button>
-                  </div>
-                </div>
-              )}
+        <div className="ml-auto w-full sm:w-auto flex gap-2 justify-end">
+          <button
+            onClick={clearFilters}
+            className="h-10 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 transition"
+          >
+            Limpiar
+          </button>
+          <button
+            onClick={() => setFiltersOpen(false)}
+            className="h-10 px-4 rounded-md bg-[#e0a200]/20 text-[#e0a200] hover:bg-[#e0a200]/30 border border-[#e0a200]/30 transition"
+          >
+            Listo
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
             </div>
           </div>
         </div>
@@ -436,8 +494,13 @@ export default function InventarioBolsos() {
             <input
               type="number"
               step="0.01"
-              value={form.precio}
-              onChange={(e) => setForm((f) => ({ ...f, precio: Number(e.target.value) }))}
+              value={form.precio === "" ? "" : form.precio}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  precio: e.target.value === "" ? "" : Number(e.target.value),
+                }))
+              }
               disabled={saving}
               className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
               required
@@ -459,8 +522,13 @@ export default function InventarioBolsos() {
             <label className="text-sm text-[#c2b48d]">Cantidad</label>
             <input
               type="number"
-              value={form.cantidad}
-              onChange={(e) => setForm((f) => ({ ...f, cantidad: Number(e.target.value) }))}
+              value={form.cantidad === "" ? "" : form.cantidad}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  cantidad: e.target.value === "" ? "" : Number(e.target.value),
+                }))
+              }
               disabled={saving}
               className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
               required

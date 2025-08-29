@@ -1,12 +1,18 @@
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const router = useRouter();
 
   const handleDropdown = (menu: string) => {
     setOpenDropdown(openDropdown === menu ? null : menu);
+  };
+
+  const handleLogout = () => {
+    router.push('/login');
   };
 
   const menuItems = [
@@ -25,6 +31,14 @@ export default function Navbar() {
       subItems: [
         { label: "Agregar venta", href: "/ventas/nueva" },
         { label: "Ver registro de ventas", href: "/ventas/registro" }
+      ],
+    },
+    {
+      label: "Devoluciones",
+      href: "#",
+      subItems: [
+        { label: "Registrar devolución", href: "/devoluciones/nueva" },
+        { label: "Ver registro de devoluciones", href: "/devoluciones/registro" }
       ],
     },
     {
@@ -58,18 +72,21 @@ export default function Navbar() {
         md:translate-x-0 md:w-full md:h-[72px] md:flex-row md:items-center md:justify-between md:px-6 md:py-0 md:border-b md:border-[#e0a200]/30`}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div
+          className="flex items-center gap-3 shrink-0 cursor-pointer"
+          onClick={() => router.push('/dashboard')}
+        >
           <img src="/img/logo.png" alt="Logo" className="w-10 h-10" />
           <span className="text-xl font-medium text-[#e0a200]">Inventario C2</span>
         </div>
 
         {/* Menú - Mobile */}
-        <div className="flex flex-col gap-4 flex-grow md:hidden">
-          {menuItems.map(({ label, href, subItems }) => (
+        <div className="flex flex-col gap-2 flex-grow md:hidden">
+          {menuItems.map(({ label, subItems }) => (
             <div key={label} className="flex flex-col">
               <button
                 onClick={() => handleDropdown(label)}
-                className="flex items-center justify-between px-4 py-2 text-white hover:text-[#e0a200] transition-colors"
+                className="flex items-center justify-between px-4 py-2 rounded-md text-white bg-black/50 hover:bg-black/60 hover:text-[#e0a200] transition-colors whitespace-nowrap"
               >
                 {label}
                 {subItems.length > 0 && (
@@ -132,7 +149,10 @@ export default function Navbar() {
         </div>
 
         {/* Botón Cerrar Sesión */}
-        <button className="mt-auto px-4 py-2 rounded-md bg-[#e0a200]/10 text-[#e0a200] hover:bg-[#e0a200]/20 transition-colors flex items-center gap-2 md:mt-0 md:ml-auto">
+        <button
+          onClick={handleLogout}
+          className="mt-auto px-4 py-2 rounded-md bg-[#e0a200]/10 text-[#e0a200] hover:bg-[#e0a200]/20 transition-colors flex items-center gap-2 md:mt-0 md:ml-auto"
+        >
           <span className="material-symbols-outlined">logout</span>
           <span className="md:inline">Cerrar sesión</span>
         </button>

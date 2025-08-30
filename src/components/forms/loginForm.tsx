@@ -26,7 +26,7 @@ export default function LoginForm() {
       const me = getCurrentUser();
       if (!me) throw new Error("Token inválido");
 
-      const next = (router.query.next as string) || "/ventas/registro";
+      const next = (router.query.next as string) || "/Inventario/zapatos";
       router.replace(next);
     } catch (err: any) {
       setError(err?.message || "No se pudo iniciar sesión");

@@ -73,10 +73,10 @@ export default function Navbar() {
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0 md:w-full md:h-[72px] md:flex-row md:items-center md:justify-between md:px-6 md:py-0 md:border-b md:border-[#e0a200]/30`}
       >
-        {/* Logo */}
+        {/* Logo (no clickeable) */}
         <div
-          className="flex items-center gap-3 shrink-0 cursor-pointer"
-          onClick={() => go('/dashboard')}
+          className="flex items-center gap-3 shrink-0 pointer-events-none select-none"
+          aria-label="Inventario C2"
         >
           <img src="/img/logo.png" alt="Logo" className="w-10 h-10" />
           <span className="text-xl font-medium text-[#e0a200]">Inventario C2</span>

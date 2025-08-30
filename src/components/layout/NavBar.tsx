@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 
@@ -11,8 +11,10 @@ export default function Navbar() {
     setOpenDropdown(openDropdown === menu ? null : menu);
   };
 
-  const handleLogout = () => {
-    router.push('/login');
+  const go = async (href: string) => {
+    setIsOpen(false);
+    setOpenDropdown(null);
+    if (router.asPath !== href) await router.push(href);
   };
 
   const menuItems = [
@@ -20,9 +22,9 @@ export default function Navbar() {
       label: "Inventario",
       href: "#",
       subItems: [
-        { label: "Ropa", href: "/inventario/ropa" },
-        { label: "Zapatos", href: "/inventario/zapatos" },
-        { label: "Bolsos", href: "/inventario/bolsos" },
+        { label: "Ropa",    href: "/Inventario/ropa" },
+        { label: "Zapatos", href: "/Inventario/zapatos" },
+        { label: "Bolsos",  href: "/Inventario/bolsos" },
       ],
     },
     {
@@ -45,7 +47,7 @@ export default function Navbar() {
       label: "Ingreso de mercancía",
       href: "#",
       subItems: [
-        { label: "Registrar ingreso", href: "/ingresos/nuevo" },
+        { label: "Registrar ingreso", href: "/ingresos/nueva" },
         { label: "Ver registro de ingresos", href: "/ingresos/registro" }
       ],
     },
@@ -74,7 +76,7 @@ export default function Navbar() {
         {/* Logo */}
         <div
           className="flex items-center gap-3 shrink-0 cursor-pointer"
-          onClick={() => router.push('/dashboard')}
+          onClick={() => go('/dashboard')}
         >
           <img src="/img/logo.png" alt="Logo" className="w-10 h-10" />
           <span className="text-xl font-medium text-[#e0a200]">Inventario C2</span>
@@ -89,21 +91,21 @@ export default function Navbar() {
                 className="flex items-center justify-between px-4 py-2 rounded-md text-white bg-black/50 hover:bg-black/60 hover:text-[#e0a200] transition-colors whitespace-nowrap"
               >
                 {label}
-                {subItems.length > 0 && (
+                {!!subItems.length && (
                   <span className="material-symbols-outlined">
                     {openDropdown === label ? 'expand_less' : 'expand_more'}
                   </span>
                 )}
               </button>
 
-              {subItems.length > 0 && openDropdown === label && (
+              {!!subItems.length && openDropdown === label && (
                 <div className="ml-8 mt-1 flex flex-col border-l border-[#e0a200]/30">
                   {subItems.map((item) => (
                     <Link
                       key={item.href}
                       href={item.href}
                       className="px-4 py-2 text-white/80 hover:text-[#e0a200] transition-colors text-sm"
-                      onClick={() => setIsOpen(false)}
+                      onClick={(e) => { e.preventDefault(); go(item.href); }}
                     >
                       {item.label}
                     </Link>
@@ -123,21 +125,21 @@ export default function Navbar() {
                 className="px-4 py-2 text-white hover:text-[#e0a200] transition-colors flex items-center h-full"
               >
                 {label}
-                {subItems.length > 0 && (
+                {!!subItems.length && (
                   <span className="material-symbols-outlined text-sm ml-1">
                     expand_more
                   </span>
                 )}
               </button>
 
-              {subItems.length > 0 && openDropdown === label && (
+              {!!subItems.length && openDropdown === label && (
                 <div className="flex flex-col absolute top-full left-1/2 transform -translate-x-1/2 bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_2px_10px_rgba(255,234,7,0.1)] rounded-md z-50 min-w-[180px]">
                   {subItems.map((item) => (
                     <Link
                       key={item.href}
                       href={item.href}
                       className="px-4 py-2 text-white hover:bg-[#e0a200]/10 hover:text-[#e0a200] transition-colors"
-                      onClick={() => setOpenDropdown(null)}
+                      onClick={(e) => { e.preventDefault(); go(item.href); }}
                     >
                       {item.label}
                     </Link>
@@ -150,7 +152,7 @@ export default function Navbar() {
 
         {/* Botón Cerrar Sesión */}
         <button
-          onClick={handleLogout}
+          onClick={() => go('/login')}
           className="mt-auto px-4 py-2 rounded-md bg-[#e0a200]/10 text-[#e0a200] hover:bg-[#e0a200]/20 transition-colors flex items-center gap-2 md:mt-0 md:ml-auto"
         >
           <span className="material-symbols-outlined">logout</span>
@@ -158,22 +160,11 @@ export default function Navbar() {
         </button>
       </nav>
 
-      {/* Estilos globales */}
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
-
-        body {
-          font-family: 'Poppins', sans-serif;
-          background: #0f0a1a;
-          padding-top: 0;
-        }
-
-        @media (min-width: 768px) {
-          body {
-            padding-top: 72px;
-          }
-        }
+        body { font-family: 'Poppins', sans-serif; background: #0f0a1a; padding-top: 0; }
+        @media (min-width: 768px) { body { padding-top: 72px; } }
       `}</style>
     </>
   );

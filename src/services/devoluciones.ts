@@ -1,52 +1,54 @@
 // src/services/devoluciones.ts
+
 export type Devolucion = {
   id?: number;
-  fecha?: string;
+  fecha?: string;                 // ISO (o yyyy-mm-dd)
+  observaciones?: string | null;
 
-  // devuelto
-  tipo_devuelto?: 'zapato' | 'ropa' | 'bolso';
-  zapato_id_devuelto?: number;
-  nombre_producto_devuelto?: string;
-  color_devuelto?: string;
-  talla_devuelta?: string;
-  precio_devuelto?: number;
+  // Campos opcionales que tu tabla usa:
+  producto?: string;
+  nombre_producto?: string;
+  producto_recibido?: string;
+  producto_entregado?: string;
 
-  // entregado
-  tipo_entregado?: 'zapato' | 'ropa' | 'bolso';
-  zapato_id_entregado?: number;
-  nombre_producto_entregado?: string;
-  color_entregado?: string;
+  talla?: string;
+  talla_recibida?: string;
   talla_entregada?: string;
+
+  color?: string;
+  color_recibido?: string;
+  color_entregado?: string;
+
+  precio?: number;
+  precio_recibido?: number;
   precio_entregado?: number;
+  diferencia_pago?: number;
 
-  // dinero
-  excedente?: number; // cuando entregado > devuelto
-
-  // otros
-  observaciones?: string;
   usuario_id?: number;
-  usuario?: { id: number; nombre: string };
+  usuario_nombre?: string;
+  usuario?: { id: number; nombre?: string } | null;
 };
 
-// BASE igual que ventas.ts
+// Lee NEXT_PUBLIC_API_BASE (ej.: http://localhost:3001).
+// Si no está, usará rutas relativas ("/devoluciones/...") contra el mismo host.
 const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
 
+// Construye URL sin usar new URL() (evita "Invalid URL" si BASE está vacío).
 function buildUrl(path: string, params?: Record<string, string | number | undefined>) {
   const p = path.startsWith("/") ? path : `/${path}`;
-  const base = BASE_URL ? `${BASE_URL}${p}` : p;
+  const base = BASE_URL ? `${BASE_URL}${p}` : p; // relativo si no hay base
   if (!params) return base;
+
   const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
+  for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && `${v}` !== "") qs.set(k, String(v));
-  });
+  }
   const q = qs.toString();
   return q ? `${base}?${q}` : base;
 }
 
-function jsonHeaders(token?: string) {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) h.Authorization = `Bearer ${token}`;
-  return h;
+function jsonHeaders() {
+  return { "Content-Type": "application/json" };
 }
 
 async function errorFromResponse(res: Response) {
@@ -60,54 +62,49 @@ async function errorFromResponse(res: Response) {
   return err;
 }
 
-// Crear
-export async function createDevolucion(dto: Partial<Devolucion>, token?: string): Promise<Devolucion> {
+// ======================= CRUD & consultas =======================
+
+// Crear devolución
+export async function createDevolucion(dto: any): Promise<Devolucion> {
   const res = await fetch(buildUrl("/devoluciones"), {
     method: "POST",
-    headers: jsonHeaders(token),
+    headers: jsonHeaders(),
     body: JSON.stringify(dto),
   });
   if (!res.ok) throw await errorFromResponse(res);
   return res.json();
 }
 
-// Listar todo
-export async function getDevoluciones(token?: string): Promise<Devolucion[]> {
-  const res = await fetch(buildUrl("/devoluciones"), {
-    headers: jsonHeaders(token),
-    cache: "no-store",
-  });
+// Listar todas las devoluciones (si lo usas)
+export async function getDevoluciones(): Promise<Devolucion[]> {
+  const res = await fetch(buildUrl("/devoluciones"), { cache: "no-store" });
   if (!res.ok) throw await errorFromResponse(res);
   return res.json();
 }
 
-// Rango de fechas: start/end pueden ser ISO o YYYY-MM-DDTHH...
-export async function getDevolucionesByDateRange(start: string, end: string, token?: string): Promise<Devolucion[]> {
-  const res = await fetch(buildUrl("/devoluciones/rango-fechas", { start, end }), {
-    headers: jsonHeaders(token),
-    cache: "no-store",
-  });
+// Devoluciones por rango (mismo endpoint-style que ventas)
+// Ventas usa: GET /ventas/rango-fechas?start=...&end=...
+// Aquí usamos: GET /devoluciones/rango-fechas?start=...&end=...
+export async function getDevolucionesByDateRange(start: string, end: string): Promise<Devolucion[]> {
+  const res = await fetch(buildUrl("/devoluciones/rango-fechas", { start, end }), { cache: "no-store" });
   if (!res.ok) throw await errorFromResponse(res);
   return res.json();
 }
 
-// Actualizar (no toca inventario)
-export async function updateDevolucion(id: number, dto: Partial<Devolucion>, token?: string): Promise<Devolucion> {
+// Actualizar devolución
+export async function updateDevolucion(id: number, dto: any): Promise<Devolucion> {
   const res = await fetch(buildUrl(`/devoluciones/${id}`), {
     method: "PATCH",
-    headers: jsonHeaders(token),
+    headers: jsonHeaders(),
     body: JSON.stringify(dto),
   });
   if (!res.ok) throw await errorFromResponse(res);
   return res.json();
 }
 
-// Eliminar (no toca inventario)
-export async function deleteDevolucion(id: number, token?: string): Promise<{ ok: true }> {
-  const res = await fetch(buildUrl(`/devoluciones/${id}`), {
-    method: "DELETE",
-    headers: jsonHeaders(token),
-  });
+// Eliminar devolución
+export async function deleteDevolucion(id: number): Promise<{ ok: true }> {
+  const res = await fetch(buildUrl(`/devoluciones/${id}`), { method: "DELETE" });
   if (!res.ok) throw await errorFromResponse(res);
   return { ok: true };
 }

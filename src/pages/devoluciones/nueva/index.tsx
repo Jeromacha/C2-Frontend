@@ -1,52 +1,51 @@
-// src/pages/devoluciones/nueva/index.tsx
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import AppLayout from "@/components/layout/AppLayout";
 import { Qwitcher_Grypen } from "next/font/google";
 import { createDevolucion } from "@/services/devoluciones";
-import { getZapatos } from "@/services/zapatos";
-import { getRopa } from "@/services/ropa";
-import { getBolsos } from "@/services/bolsos";
+
+type RopaItem = {
+  nombre: string;
+  color: string;
+  precio: number;
+  tallas?: Array<{ talla: string; cantidad: number }>;
+};
+type ZapatoItem = {
+  id: number; // zapato_id
+  nombre: string;
+  color: string;
+  precio: number;
+  tallas?: Array<{ talla: string; cantidad: number }>;
+};
+type BolsoItem = {
+  id: string; // bolso_id
+  nombre: string;
+  color?: string;
+  precio: number;
+};
+
+type TipoProducto = "zapato" | "ropa" | "bolso";
+
+type EntregadoItem = {
+  tipo: TipoProducto;
+  nombre: string;
+  color?: string;
+  talla?: string; // "Única" para bolso
+  precio: number;
+  refId?: number | string; // opcional (zapato/bolso)
+  cantidad?: number; // default 1
+};
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
-type Tipo = "zapato" | "ropa" | "bolso";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+const apiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
 
-type TallaStock = { talla: string; cantidad: number };
-
-type ItemZapato = {
-  id: number;
-  nombre: string;
-  color?: string;
-  precio: number;
-  tallas?: TallaStock[];
-};
-
-type ItemRopa = {
-  nombre: string;
-  color?: string;
-  precio: number;
-  tallas?: TallaStock[];
-};
-
-type ItemBolso = {
-  id: string | number;
-  nombre: string;
-  color?: string;
-  precio: number;
-  // normalmente bolsos no tienen tallas; usaremos "UNICA"
-};
-
-function fmtMoney(n?: number) {
-  const v = Number(n ?? 0);
-  return `$${v.toLocaleString("es-CO", { maximumFractionDigits: 0 })}`;
-}
-
-// Igual que en ventas: obtener usuario_id automáticamente (desde token o localStorage)
+// Igual que en ventas
 function getUsuarioIdAuto(): number | undefined {
   if (typeof window === "undefined") return undefined;
-
-  const token = window.localStorage.getItem("access_token") || window.localStorage.getItem("token");
+  const token = window.localStorage.getItem("access_token");
   if (token) {
     try {
       const [, payloadB64] = token.split(".");
@@ -63,56 +62,137 @@ function getUsuarioIdAuto(): number | undefined {
 }
 
 export default function NuevaDevolucionPage() {
-  // Catálogos
-  const [zapatos, setZapatos] = useState<ItemZapato[]>([]);
-  const [ropas, setRopas] = useState<ItemRopa[]>([]);
-  const [bolsos, setBolsos] = useState<ItemBolso[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
+  // Tipo del RECIBIDO (afecta inventario) y tipo del picker para ENTREGADO (carrito)
+  const [tipoRec, setTipoRec] = useState<TipoProducto>("zapato");
+  const [tipoEntPicker, setTipoEntPicker] = useState<TipoProducto>("zapato");
+
+  // Catálogos
+  const [zapatos, setZapatos] = useState<ZapatoItem[]>([]);
+  const [ropas, setRopas] = useState<RopaItem[]>([]);
+  const [bolsos, setBolsos] = useState<BolsoItem[]>([]);
+
+  // RECIBIDO (devuelto) - inputs
+  const [zapatoRecInput, setZapatoRecInput] = useState("");
+  const [ropaRecInput, setRopaRecInput] = useState("");
+  const [bolsoRecInput, setBolsoRecInput] = useState("");
+
+  const zapatoRecSel = useMemo(
+    () =>
+      zapatos.find(
+        (z) =>
+          `${z.nombre} — ${z.color} — $${z.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          zapatoRecInput.trim().toLowerCase()
+      ),
+    [zapatoRecInput, zapatos]
+  );
+  const ropaRecSel = useMemo(
+    () =>
+      ropas.find(
+        (r) =>
+          `${r.nombre} — ${r.color} — $${r.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          ropaRecInput.trim().toLowerCase()
+      ),
+    [ropaRecInput, ropas]
+  );
+  const bolsoRecSel = useMemo(
+    () =>
+      bolsos.find(
+        (b) =>
+          `${b.nombre}${b.color ? ` — ${b.color}` : ""} — $${b.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          bolsoRecInput.trim().toLowerCase()
+      ),
+    [bolsoRecInput, bolsos]
+  );
+
+  // Talllas RECIBIDO (permitimos TODO, incluso stock 0; si no hay lista, input manual)
+  const [tallaZapatoRec, setTallaZapatoRec] = useState("");
+  const [tallaRopaRec, setTallaRopaRec] = useState("");
+  const tallasZapatoRecTodas = useMemo(
+    () => (zapatoRecSel?.tallas || []).map((t) => String(t.talla)),
+    [zapatoRecSel]
+  );
+  const tallasRopaRecTodas = useMemo(
+    () => (ropaRecSel?.tallas || []).map((t) => String(t.talla)),
+    [ropaRecSel]
+  );
+
+  // ENTREGADO (carrito)
+  const [zapatoEntInput, setZapatoEntInput] = useState("");
+  const [ropaEntInput, setRopaEntInput] = useState("");
+  const [bolsoEntInput, setBolsoEntInput] = useState("");
+  const [tallaZapatoEnt, setTallaZapatoEnt] = useState("");
+  const [tallaRopaEnt, setTallaRopaEnt] = useState("");
+  const [entregados, setEntregados] = useState<EntregadoItem[]>([]);
+
+  const zapatoEntSel = useMemo(
+    () =>
+      zapatos.find(
+        (z) =>
+          `${z.nombre} — ${z.color} — $${z.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          zapatoEntInput.trim().toLowerCase()
+      ),
+    [zapatoEntInput, zapatos]
+  );
+  const ropaEntSel = useMemo(
+    () =>
+      ropas.find(
+        (r) =>
+          `${r.nombre} — ${r.color} — $${r.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          ropaEntInput.trim().toLowerCase()
+      ),
+    [ropaEntInput, ropas]
+  );
+  const bolsoEntSel = useMemo(
+    () =>
+      bolsos.find(
+        (b) =>
+          `${b.nombre}${b.color ? ` — ${b.color}` : ""} — $${b.precio?.toLocaleString("es-CO")}`.toLowerCase() ===
+          bolsoEntInput.trim().toLowerCase()
+      ),
+    [bolsoEntInput, bolsos]
+  );
+
+  // Talllas ENTREGADO (sí filtramos >0 para no ofrecer stock inexistente)
+  const tallasZapatoEntDisponibles = useMemo(
+    () => (zapatoEntSel?.tallas || []).filter((t) => Number(t.cantidad) > 0).map((t) => String(t.talla)),
+    [zapatoEntSel]
+  );
+  const tallasRopaEntDisponibles = useMemo(
+    () => (ropaEntSel?.tallas || []).filter((t) => Number(t.cantidad) > 0).map((t) => String(t.talla)),
+    [ropaEntSel]
+  );
+
+  // Precios
+  const [precioRec, setPrecioRec] = useState<number | "">("" as "");
+  const totalEntregado = useMemo(
+    () => entregados.reduce((acc, it) => acc + Number(it.precio || 0), 0),
+    [entregados]
+  );
+  const diferencia = useMemo(
+    () => Number(totalEntregado || 0) - Number(precioRec || 0),
+    [totalEntregado, precioRec]
+  );
+
+  // Cargar catálogos
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        setLoading(true);
-        const [z, r, b] = await Promise.all([getZapatos(), getRopa(), getBolsos()]);
+        const [zap, rop, bol] = await Promise.all([
+          fetch(apiUrl("/zapatos")).then((r) => (r.ok ? r.json() : [])),
+          fetch(apiUrl("/ropa")).then((r) => (r.ok ? r.json() : [])),
+          fetch(apiUrl("/bolsos")).then((r) => (r.ok ? r.json() : [])),
+        ]);
         if (!alive) return;
-
-        // ✅ Normalizar tallas de zapatos a { talla: string, cantidad: number }
-        setZapatos(
-          Array.isArray(z)
-            ? z.map((zap: any) => ({
-                ...zap,
-                tallas: Array.isArray(zap.tallas)
-                  ? zap.tallas.map((t: any) => ({
-                      talla: String(t.talla),
-                      cantidad: Number(t.cantidad),
-                    }))
-                  : [],
-              }))
-            : []
-        );
-
-        setRopas(
-          Array.isArray(r)
-            ? r.map((rop: any) => ({
-                ...rop,
-                tallas: Array.isArray(rop.tallas)
-                  ? rop.tallas.map((t: any) => ({
-                      talla: String(t.talla),
-                      cantidad: Number(t.cantidad),
-                    }))
-                  : [],
-              }))
-            : []
-        );
-
-        setBolsos(Array.isArray(b) ? b : []);
+        setZapatos(Array.isArray(zap) ? zap : []);
+        setRopas(Array.isArray(rop) ? rop : []);
+        setBolsos(Array.isArray(bol) ? bol : []);
       } catch (e) {
-        console.error(e);
-        setErr("No se pudo cargar el catálogo. Revisa la API.");
-      } finally {
-        setLoading(false);
+        console.error("Error cargando catálogos:", e);
       }
     })();
     return () => {
@@ -120,192 +200,228 @@ export default function NuevaDevolucionPage() {
     };
   }, []);
 
-  // Tipo de devolución (DTO: zapato | ropa | bolso)
-  const [tipo, setTipo] = useState<Tipo>("zapato");
-
-  // Búsquedas
-  const [qRecibido, setQRecibido] = useState(""); // producto que devuelve el cliente (RECIBIDO por la tienda)
-  const [qEntregado, setQEntregado] = useState(""); // producto que se entrega al cliente (ENTREGADO)
-
-  // Selecciones
-  const [recibido, setRecibido] = useState<{ nombre?: string; color?: string; precio?: number }>({});
-  const [entregado, setEntregado] = useState<{ nombre?: string; color?: string; precio?: number }>({});
-
-  // Tallas
-  const [tallaRecibida, setTallaRecibida] = useState<string>("");
-  const [tallaEntregada, setTallaEntregada] = useState<string>("");
-
-  // Precios (autorrellenos, editables)
-  const [precioRecibido, setPrecioRecibido] = useState<number | "">("" as "");
-  const [precioEntregado, setPrecioEntregado] = useState<number | "">("" as "");
-
-  // Catálogo según tipo
-  const catalogo = useMemo(() => {
-    if (tipo === "zapato") return zapatos;
-    if (tipo === "ropa") return ropas;
-    return bolsos;
-  }, [tipo, zapatos, ropas, bolsos]);
-
-  // Filtrado por texto
-  function filtrar(lista: any[], q: string) {
-    const t = q.trim().toLowerCase();
-    if (!t) return lista;
-    return lista.filter((x) =>
-      [x.nombre, x.color]
-        .filter(Boolean)
-        .map((s: string) => s.toLowerCase())
-        .some((s: string) => s.includes(t))
-    );
-  }
-  const filteredRec = useMemo(() => filtrar(catalogo, qRecibido), [catalogo, qRecibido]);
-  const filteredEnt = useMemo(() => filtrar(catalogo, qEntregado), [catalogo, qEntregado]);
-
-  // 🔧 util para obtener tallas según stock
-  function getTallas(lista: any[], sel: { nombre?: string; color?: string }, includeOutOfStock: boolean): string[] {
-    if (tipo === "bolso") return ["UNICA"];
-    const it = lista.find((x) => x.nombre === sel.nombre && (x.color ?? "") === (sel.color ?? ""));
-    if (!it) return [];
-    const base = (it.tallas || []) as TallaStock[];
-    const arr = includeOutOfStock ? base : base.filter((t) => Number(t.cantidad) > 0);
-    return arr.map((t) => String(t.talla));
-  }
-
-  // ✅ RECIBIDO: TODAS las tallas (aunque no haya stock)
-  const tallasRecibido = useMemo(
-    () => getTallas(filteredRec as any, recibido, true),
-    [filteredRec, recibido, tipo]
-  );
-
-  // ✅ ENTREGADO: SOLO tallas con stock > 0
-  const tallasEntregado = useMemo(
-    () => getTallas(filteredEnt as any, entregado, false),
-    [filteredEnt, entregado, tipo]
-  );
-
-  // Autorrelleno de precios al elegir item
+  // Autollenar precio recibido si no lo cambiaron aún
   useEffect(() => {
-    if (typeof recibido?.precio === "number") setPrecioRecibido(recibido.precio);
-  }, [recibido?.precio]);
+    if (precioRec !== "") return;
+    if (tipoRec === "zapato" && zapatoRecSel) setPrecioRec(zapatoRecSel.precio ?? "");
+    if (tipoRec === "ropa" && ropaRecSel) setPrecioRec(ropaRecSel.precio ?? "");
+    if (tipoRec === "bolso" && bolsoRecSel) setPrecioRec(bolsoRecSel.precio ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoRec, zapatoRecSel, ropaRecSel, bolsoRecSel]);
+
+  // Resets al cambiar tipo RECIBIDO
   useEffect(() => {
-    if (typeof entregado?.precio === "number") setPrecioEntregado(entregado.precio);
-  }, [entregado?.precio]);
+    setZapatoRecInput("");
+    setRopaRecInput("");
+    setBolsoRecInput("");
+    setTallaZapatoRec("");
+    setTallaRopaRec("");
+    setPrecioRec("" as "");
+  }, [tipoRec]);
 
-  // Reset al cambiar tipo
-  function resetSeleccion() {
-    setRecibido({});
-    setEntregado({});
-    setQRecibido("");
-    setQEntregado("");
-    setTallaRecibida(tipo === "bolso" ? "UNICA" : "");
-    setTallaEntregada(tipo === "bolso" ? "UNICA" : "");
-    setPrecioRecibido("" as "");
-    setPrecioEntregado("" as "");
+  // Resets del picker ENTREGADO (no toca carrito)
+  useEffect(() => {
+    setZapatoEntInput("");
+    setRopaEntInput("");
+    setBolsoEntInput("");
+    setTallaZapatoEnt("");
+    setTallaRopaEnt("");
+  }, [tipoEntPicker]);
+
+  function addEntregado() {
+    try {
+      if (tipoEntPicker === "zapato") {
+        if (!zapatoEntSel?.id) throw new Error("Selecciona el zapato ENTREGADO.");
+        if (!tallaZapatoEnt) throw new Error("Selecciona la talla del zapato ENTREGADO.");
+        setEntregados((prev: EntregadoItem[]) => [
+          ...prev,
+          {
+            tipo: "zapato",
+            nombre: zapatoEntSel.nombre,
+            color: zapatoEntSel.color,
+            talla: String(tallaZapatoEnt),
+            precio: Number(zapatoEntSel.precio || 0),
+            refId: zapatoEntSel.id,
+            cantidad: 1,
+          },
+        ]);
+        setZapatoEntInput("");
+        setTallaZapatoEnt("");
+      } else if (tipoEntPicker === "ropa") {
+        if (!ropaEntSel) throw new Error("Selecciona la prenda ENTREGADA.");
+        if (!tallaRopaEnt) throw new Error("Selecciona la talla de la prenda ENTREGADA.");
+        setEntregados((prev: EntregadoItem[]) => [
+          ...prev,
+          {
+            tipo: "ropa",
+            nombre: ropaEntSel.nombre,
+            color: ropaEntSel.color,
+            talla: String(tallaRopaEnt),
+            precio: Number(ropaEntSel.precio || 0),
+            cantidad: 1,
+          },
+        ]);
+        setRopaEntInput("");
+        setTallaRopaEnt("");
+      } else {
+        if (!bolsoEntSel?.id) throw new Error("Selecciona el bolso ENTREGADO.");
+        setEntregados((prev: EntregadoItem[]) => [
+          ...prev,
+          {
+            tipo: "bolso",
+            nombre: bolsoEntSel.nombre,
+            color: bolsoEntSel.color,
+            talla: "Única",
+            precio: Number(bolsoEntSel.precio || 0),
+            refId: bolsoEntSel.id,
+            cantidad: 1,
+          },
+        ]);
+        setBolsoEntInput("");
+      }
+    } catch (e: any) {
+      alert(e?.message || "No se pudo agregar el producto entregado.");
+    }
   }
 
-  // Diferencia a pagar
-  const diferencia_pago = Math.max(0, Number(precioEntregado || 0) - Number(precioRecibido || 0));
-
-  // UI de ítem
-  function ItemCard({ item, onPick }: { item: any; onPick: () => void }) {
-    const precio = Number(item.precio ?? 0);
-    return (
-      <button
-        type="button"
-        onClick={onPick}
-        className="w-full text-left rounded-md border border-[#e0a200]/30 bg-black/40 hover:bg-[#e0a200]/10 transition p-3"
-      >
-        <div className="flex items-center justify-between">
-          <div className="text-white">
-            <div className="font-medium">{item.nombre}</div>
-            <div className="text-xs text-white/70">{item.color ? `Color: ${item.color}` : ""}</div>
-            <div className="text-xs text-white/50">
-              {tipo === "zapato" ? "Zapato" : tipo === "ropa" ? "Ropa" : "Bolso"}
-            </div>
-          </div>
-          <div className="text-[#e0a200]">{fmtMoney(precio)}</div>
-        </div>
-      </button>
-    );
+  function removeEntregado(idx: number) {
+    setEntregados((prev: EntregadoItem[]) => prev.filter((_, i) => i !== idx));
   }
+
+  // ——————————————————————————————————————————————————————————
+  // SERIALIZADOR compatible con tu backend (listas alineadas):
+  function buildEntregadoCompat(entregados: EntregadoItem[]) {
+    const productos: string[] = [];
+    const tallas: string[] = [];
+    const coloresRopa = new Set<string>();
+
+    for (const it of entregados) {
+      if (it.tipo === "zapato") {
+        // Backend espera ID numérico
+        if (it.refId == null) throw new Error("Falta ID de zapato ENTREGADO.");
+        productos.push(String(it.refId));
+        tallas.push(String(it.talla ?? "").trim());
+      } else if (it.tipo === "bolso") {
+        // Backend intenta por id exacto; talla “Única”
+        if (it.refId == null) throw new Error("Falta ID de bolso ENTREGADO.");
+        productos.push(String(it.refId));
+        tallas.push("Única");
+      } else {
+        // ropa: usa nombre + color_entregado (único global) + talla
+        if (!it.nombre || !it.color) {
+          throw new Error("Para ropa ENTREGADA se requiere nombre y color.");
+        }
+        productos.push(it.nombre);
+        tallas.push(String(it.talla ?? "").trim());
+        coloresRopa.add(it.color);
+      }
+    }
+
+    // color_entregado global: si hay ropa, todas deben compartir el mismo color
+    let color_entregado: string | undefined = undefined;
+    if (coloresRopa.size > 0) {
+      if (coloresRopa.size > 1) {
+        throw new Error("No se pueden entregar varias prendas de ropa con colores distintos en la misma devolución.");
+      }
+      color_entregado = Array.from(coloresRopa)[0];
+    }
+
+    return {
+      producto_entregado: productos.join("; "),
+      talla_entregada: tallas.join("; "),
+      color_entregado, // puede ser undefined si no hubo ropa
+    };
+  }
+  // ——————————————————————————————————————————————————————————
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-
-    const uid = getUsuarioIdAuto();
-    if (!uid || !Number.isInteger(uid) || uid <= 0) {
-      alert("No se pudo determinar un usuario válido. Inicia sesión o configura usuario_id.");
-      return;
-    }
-    if (!recibido?.nombre) {
-      alert("Selecciona el producto RECIBIDO (devuelto por el cliente).");
-      return;
-    }
-    if (!entregado?.nombre) {
-      alert("Selecciona el producto ENTREGADO al cliente.");
-      return;
-    }
-
-    // Para bolso, la talla es "UNICA"
-    const tallaRec = tipo === "bolso" ? "UNICA" : tallaRecibida;
-    const tallaEnt = tipo === "bolso" ? "UNICA" : tallaEntregada;
-
-    if (!tallaRec || !tallasRecibido.includes(tallaRec)) {
-      alert("Selecciona una talla RECIBIDA válida.");
-      return;
-    }
-    if (!tallaEnt || !tallasEntregado.includes(tallaEnt)) {
-      alert("Selecciona una talla ENTREGADA válida.");
-      return;
-    }
-
-    const pr = Number(precioRecibido);
-    const pe = Number(precioEntregado);
-    if (!Number.isFinite(pr)) {
-      alert("precio_recibido inválido.");
-      return;
-    }
-    if (!Number.isFinite(pe)) {
-      alert("precio_entregado inválido.");
-      return;
-    }
-    const dif = Math.max(0, pe - pr);
-
-    // Construir DTO EXACTO a tu CreateDevolucionDto
-    const dto: any = {
-      tipo, // 'zapato' | 'ropa' | 'bolso'
-      producto_entregado: String(entregado.nombre).trim(),
-      talla_entregada: String(tallaEnt).trim(),
-      producto_recibido: String(recibido.nombre).trim(),
-      talla_recibida: String(tallaRec).trim(),
-      precio_entregado: pe,
-      precio_recibido: pr,
-      diferencia_pago: dif,
-      usuario_id: uid,
-    };
-    const ce = (entregado.color || "").toString().trim();
-    const cr = (recibido.color || "").toString().trim();
-    if (ce) dto.color_entregado = ce; // opcional
-    if (cr) dto.color_recibido = cr;  // opcional
-
-    console.log("[devoluciones/nueva] Enviando payload:", dto);
+    if (saving) return;
 
     try {
-      const token = typeof window !== "undefined" ? (localStorage.getItem("token") || undefined) : undefined;
-      await createDevolucion(dto, token);
-      window.location.href = "/devoluciones/registro";
+      setSaving(true);
+      setError("");
+
+      const uid = getUsuarioIdAuto();
+      if (!uid) {
+        alert("No se pudo determinar el usuario. Inicia sesión o configura usuario_id en localStorage.");
+        setSaving(false);
+        return;
+      }
+
+      if (precioRec === "" || isNaN(Number(precioRec))) {
+        alert("El precio recibido es obligatorio.");
+        setSaving(false);
+        return;
+      }
+
+      // === RECIBIDO (DTO base) ===
+      const payload: any = {
+        tipo: tipoRec, // el backend ajusta inventario del RECIBIDO
+        usuario_id: Number(uid),
+        precio_recibido: Number(precioRec),
+      };
+
+      if (tipoRec === "zapato") {
+        if (!zapatoRecSel?.id) throw new Error("Selecciona el zapato DEVUELTO (recibido).");
+        if (!tallaZapatoRec) throw new Error("Ingresa/selecciona la talla del zapato DEVUELTO (recibido).");
+        if (isNaN(parseFloat(String(tallaZapatoRec)))) {
+          throw new Error("La talla del zapato devuelto debe ser numérica (ej. 38, 40.5).");
+        }
+        payload.producto_recibido = String(zapatoRecSel.id);
+        payload.color_recibido = zapatoRecSel.color || undefined;
+        payload.talla_recibida = String(tallaZapatoRec);
+      } else if (tipoRec === "ropa") {
+        if (!ropaRecSel) throw new Error("Selecciona la prenda DEVUELTA (recibido).");
+        if (!tallaRopaRec) throw new Error("Ingresa/selecciona la talla de la prenda DEVUELTA (recibido).");
+        payload.producto_recibido = ropaRecSel.nombre;
+        payload.color_recibido = ropaRecSel.color; // requerido en servicio para ropa
+        payload.talla_recibida = String(tallaRopaRec);
+      } else {
+        if (!bolsoRecSel?.id) throw new Error("Selecciona el bolso DEVUELTO (recibido).");
+        payload.producto_recibido = String(bolsoRecSel.id);
+        payload.color_recibido = bolsoRecSel.color || undefined;
+        payload.talla_recibida = "Única";
+      }
+
+      // === ENTREGADOS (carrito) ===
+      if (entregados.length === 0) {
+        throw new Error("Agrega al menos un producto ENTREGADO al carrito.");
+      }
+      const precio_entregado = entregados.reduce((acc, it) => acc + Number(it.precio || 0), 0);
+      if (precio_entregado < Number(precioRec)) {
+        throw new Error("El precio ENTREGADO (suma del carrito) debe ser igual o mayor al RECIBIDO.");
+      }
+
+      // Construir compat (listas alineadas) para el backend actual
+      const compat = buildEntregadoCompat(entregados);
+
+      payload.producto_entregado = compat.producto_entregado; // lista de IDs (zapato/bolso) o nombres (ropa)
+      payload.talla_entregada = compat.talla_entregada;       // lista alineada de tallas
+      if (compat.color_entregado) payload.color_entregado = compat.color_entregado;
+
+      payload.precio_entregado = precio_entregado;
+      payload.diferencia_pago = Number(precio_entregado) - Number(precioRec);
+
+      await createDevolucion(payload);
+      router.push("/devoluciones/registro");
     } catch (e: any) {
-      console.error("Error creando devolución:", e?.message || e);
-      alert(`No se pudo registrar la devolución.\n${e?.message || "Error desconocido"}`);
+      console.error(e);
+      const msg = e?.message || "No se pudo crear la devolución. Verifica la API o CORS.";
+      setError(msg);
+      alert(msg);
+    } finally {
+      setSaving(false);
     }
   }
 
   return (
     <AppLayout>
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Título */}
         <div className="mb-6 flex items-center justify-between">
-          <h1 className={`${qwitcher.className} text-[#e0a200] text-6xl sm:text-8xl leading-none`}>
-            Registrar devolución
+          <h1 className={`${qwitcher.className} text-[#e0a200] text-5xl sm:text-7xl leading-none`}>
+            Nueva devolución
           </h1>
           <Link
             href="/devoluciones/registro"
@@ -315,214 +431,355 @@ export default function NuevaDevolucionPage() {
           </Link>
         </div>
 
-        {loading && <div className="mb-3 text-sm text-white/70">Cargando catálogos…</div>}
-        {err && <div className="mb-3 text-sm text-red-400">{err}</div>}
+        {error && <div className="mb-3 text-sm text-red-400 whitespace-pre-wrap">{error}</div>}
 
-        {!loading && (
-          <form onSubmit={onSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Tipo */}
-            <div className="lg:col-span-2 rounded-xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 p-4">
-              <div className="mb-2 text-[#c2b48d] text-sm">Tipo de producto</div>
-              <div className="flex gap-2">
-                {(["zapato", "ropa", "bolso"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => {
-                      setTipo(t);
-                      resetSeleccion();
-                    }}
-                    className={[
-                      "px-3 py-1 rounded-md border",
-                      tipo === t
-                        ? "border-[#e0a200]/60 bg-[#e0a200]/20 text-[#e0a200]"
-                        : "border-[#e0a200]/30 text-[#c2b48d] hover:bg-[#e0a200]/10",
-                    ].join(" ")}
+        <form
+          onSubmit={onSubmit}
+          className="rounded-2xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_2px_10px_rgba(255,234,7,0.08)] p-5 grid grid-cols-1 gap-5"
+        >
+          {/* Tipos */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm text-[#c2b48d]">Tipo devuelto (recibido)</label>
+              <select
+                value={tipoRec}
+                onChange={(e) => setTipoRec(e.target.value as TipoProducto)}
+                className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+              >
+                <option value="zapato">Zapato</option>
+                <option value="ropa">Ropa</option>
+                <option value="bolso">Bolso</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm text-[#c2b48d]">Tipo entregado (para agregar al carrito)</label>
+              <select
+                value={tipoEntPicker}
+                onChange={(e) => setTipoEntPicker(e.target.value as TipoProducto)}
+                className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+              >
+                <option value="zapato">Zapato</option>
+                <option value="ropa">Ropa</option>
+                <option value="bolso">Bolso</option>
+              </select>
+            </div>
+          </div>
+
+          {/* === RECIBIDO (devuelto) === */}
+          {tipoRec === "zapato" && (
+            <>
+              <div className="text-[#c2b48d] text-sm">Devuelto (recibido) — Zapato</div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-[#c2b48d]">Zapato devuelto (escribe para buscar)</label>
+                <input
+                  list="zapatos-rec-list"
+                  value={zapatoRecInput}
+                  onChange={(e) => setZapatoRecInput(e.target.value)}
+                  placeholder="Ej. Air Max — Negro — $250.000"
+                  className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                />
+                <datalist id="zapatos-rec-list">
+                  {zapatos.map((z) => (
+                    <option key={`rec-${z.id}`} value={`${z.nombre} — ${z.color} — $${z.precio?.toLocaleString("es-CO")}`} />
+                  ))}
+                </datalist>
+              </div>
+
+              {/* Talla: TODAS las tallas del catálogo (aunque stock 0); si no hay, input manual */}
+              {tallasZapatoRecTodas.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Talla devuelta</label>
+                  <select
+                    value={tallaZapatoRec}
+                    onChange={(e) => setTallaZapatoRec(e.target.value)}
+                    disabled={!zapatoRecSel}
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
                   >
-                    {t[0].toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* RECIBIDO (devuelto por el cliente) */}
-            <div className="rounded-xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 p-4">
-              <div className="mb-2 text-[#c2b48d] text-sm">Producto recibido (devuelto)</div>
-
-              <div className="mb-3 flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#e0a200] text-[20px]">search</span>
-                <input
-                  value={qRecibido}
-                  onChange={(e) => setQRecibido(e.target.value)}
-                  placeholder="Buscar por nombre, color…"
-                  className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
-                />
-              </div>
-
-              <div className="grid gap-2 max-h-[320px] overflow-auto pr-1">
-                {filteredRec.map((it) => (
-                  <ItemCard
-                    key={`${it.nombre}-${(it as any).color ?? ""}-${(it as any).id ?? ""}`}
-                    item={it}
-                    onPick={() => {
-                      setRecibido({ nombre: it.nombre, color: (it as any).color, precio: Number(it.precio ?? 0) });
-                      // ✅ TODAS las tallas (incluye sin stock)
-                      const opciones =
-                        tipo === "bolso"
-                          ? ["UNICA"]
-                          : getTallas([it], { nombre: it.nombre, color: (it as any).color }, true);
-                      setTallaRecibida(opciones[0] ?? (tipo === "bolso" ? "UNICA" : ""));
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Talla / Precio recibidos */}
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm text-[#c2b48d]">Talla recibida</label>
-                  {tipo === "bolso" ? (
-                    <input
-                      value="UNICA"
-                      readOnly
-                      className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 text-white/90"
-                    />
-                  ) : (
-                    <select
-                      value={tallaRecibida}
-                      onChange={(e) => setTallaRecibida(e.target.value)}
-                      disabled={!recibido?.nombre}
-                      className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
-                    >
-                      <option value="">Selecciona…</option>
-                      {tallasRecibido.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                    <option value="">Selecciona…</option>
+                    {tallasZapatoRecTodas.map((t) => (
+                      <option key={`rec-${t}`} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-white/60">Si tu talla no aparece, puedes escribirla abajo.</p>
                 </div>
+              ) : null}
+
+              {tallasZapatoRecTodas.length === 0 && (
                 <div className="flex flex-col gap-1">
-                  <label className="text-sm text-[#c2b48d]">Precio recibido</label>
+                  <label className="text-sm text-[#c2b48d]">Talla devuelta (escribe)</label>
                   <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={precioRecibido === "" ? "" : precioRecibido}
-                    onChange={(e) => setPrecioRecibido(e.target.value === "" ? "" : Number(e.target.value))}
-                    className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
+                    value={tallaZapatoRec}
+                    onChange={(e) => setTallaZapatoRec(e.target.value)}
+                    placeholder="Ej. 40 o 40.5"
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
                   />
                 </div>
-              </div>
-            </div>
+              )}
+            </>
+          )}
 
-            {/* ENTREGADO (lo que se lleva el cliente) */}
-            <div className="rounded-xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 p-4">
-              <div className="mb-2 text-[#c2b48d] text-sm">Producto entregado</div>
-
-              <div className="mb-3 flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#e0a200] text-[20px]">search</span>
+          {tipoRec === "ropa" && (
+            <>
+              <div className="text-[#c2b48d] text-sm">Devuelto (recibido) — Ropa</div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-[#c2b48d]">Prenda devuelta (escribe para buscar)</label>
                 <input
-                  value={qEntregado}
-                  onChange={(e) => setQEntregado(e.target.value)}
-                  placeholder="Buscar por nombre, color…"
-                  className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
+                  list="ropa-rec-list"
+                  value={ropaRecInput}
+                  onChange={(e) => setRopaRecInput(e.target.value)}
+                  placeholder="Ej. Camiseta — Blanca — $45.000"
+                  className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
                 />
-              </div>
-
-              <div className="grid gap-2 max-h-[320px] overflow-auto pr-1">
-                {filteredEnt.map((it) => (
-                  <ItemCard
-                    key={`${it.nombre}-${(it as any).color ?? ""}-${(it as any).id ?? ""}`}
-                    item={it}
-                    onPick={() => {
-                      setEntregado({ nombre: it.nombre, color: (it as any).color, precio: Number(it.precio ?? 0) });
-                      // ✅ SOLO tallas con stock
-                      const opciones =
-                        tipo === "bolso"
-                          ? ["UNICA"]
-                          : getTallas([it], { nombre: it.nombre, color: (it as any).color }, false);
-                      setTallaEntregada(opciones[0] ?? (tipo === "bolso" ? "UNICA" : ""));
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Talla / Precio entregados */}
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm text-[#c2b48d]">Talla entregada</label>
-                  {tipo === "bolso" ? (
-                    <input
-                      value="UNICA"
-                      readOnly
-                      className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 text-white/90"
+                <datalist id="ropa-rec-list">
+                  {ropas.map((r, i) => (
+                    <option
+                      key={`rec-${r.nombre}__${r.color}__${i}`}
+                      value={`${r.nombre} — ${r.color} — $${r.precio?.toLocaleString("es-CO")}`}
                     />
-                  ) : (
-                    <select
-                      value={tallaEntregada}
-                      onChange={(e) => setTallaEntregada(e.target.value)}
-                      disabled={!entregado?.nombre}
-                      className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
-                    >
-                      <option value="">Selecciona…</option>
-                      {tallasEntregado.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
+                  ))}
+                </datalist>
+              </div>
+
+              {tallasRopaRecTodas.length > 0 ? (
                 <div className="flex flex-col gap-1">
-                  <label className="text-sm text-[#c2b48d]">Precio entregado</label>
+                  <label className="text-sm text-[#c2b48d]">Talla devuelta</label>
+                  <select
+                    value={tallaRopaRec}
+                    onChange={(e) => setTallaRopaRec(e.target.value)}
+                    disabled={!ropaRecSel}
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                  >
+                    <option value="">Selecciona…</option>
+                    {tallasRopaRecTodas.map((t) => (
+                      <option key={`rec-${t}`} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Talla devuelta (escribe)</label>
                   <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={precioEntregado === "" ? "" : precioEntregado}
-                    onChange={(e) => setPrecioEntregado(e.target.value === "" ? "" : Number(e.target.value))}
-                    className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
+                    value={tallaRopaRec}
+                    onChange={(e) => setTallaRopaRec(e.target.value)}
+                    placeholder="Ej. S / M / L"
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
                   />
                 </div>
+              )}
+              <p className="text-xs text-white/60">Para ropa, el color recibido es requerido (se toma del ítem).</p>
+            </>
+          )}
+
+          {tipoRec === "bolso" && (
+            <>
+              <div className="text-[#c2b48d] text-sm">Devuelto (recibido) — Bolso</div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-[#c2b48d]">Bolso devuelto (escribe para buscar)</label>
+                <input
+                  list="bolsos-rec-list"
+                  value={bolsoRecInput}
+                  onChange={(e) => setBolsoRecInput(e.target.value)}
+                  placeholder="Ej. Tote — Negro — $120.000"
+                  className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                />
+                <datalist id="bolsos-rec-list">
+                  {bolsos.map((b) => (
+                    <option
+                      key={`rec-${b.id}`}
+                      value={`${b.nombre}${b.color ? ` — ${b.color}` : ""} — $${b.precio?.toLocaleString("es-CO")}`}
+                    />
+                  ))}
+                </datalist>
               </div>
+              <p className="text-xs text-white/60">Para bolso la talla es “Única”.</p>
+            </>
+          )}
+
+          {/* Precio recibido */}
+          <div className="flex flex-col gap-1">
+            <label className="text-sm text-[#c2b48d]">Precio recibido (producto devuelto)</label>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={precioRec === "" ? "" : precioRec}
+              onChange={(e) => setPrecioRec(e.target.value === "" ? "" : Number(e.target.value))}
+              required
+              className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+            />
+          </div>
+
+          {/* === ENTREGADO: picker + carrito === */}
+          <div className="rounded-xl bg-black/60 border border-[#e0a200]/30 p-3">
+            <div className="text-sm text-[#c2b48d] mb-2">Agregar producto ENTREGADO al carrito</div>
+
+            {/* Picker por tipo */}
+            {tipoEntPicker === "zapato" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Zapato (escribe para buscar)</label>
+                  <input
+                    list="zapatos-ent-list"
+                    value={zapatoEntInput}
+                    onChange={(e) => setZapatoEntInput(e.target.value)}
+                    placeholder="Ej. Air Max — Negro — $250.000"
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                  />
+                  <datalist id="zapatos-ent-list">
+                    {zapatos.map((z) => (
+                      <option key={`ent-${z.id}`} value={`${z.nombre} — ${z.color} — $${z.precio?.toLocaleString("es-CO")}`} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Talla</label>
+                  <select
+                    value={tallaZapatoEnt}
+                    onChange={(e) => setTallaZapatoEnt(e.target.value)}
+                    disabled={!zapatoEntSel}
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                  >
+                    <option value="">Selecciona…</option>
+                    {tallasZapatoEntDisponibles.map((t) => (
+                      <option key={`ent-${t}`} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {tipoEntPicker === "ropa" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Prenda (escribe para buscar)</label>
+                  <input
+                    list="ropa-ent-list"
+                    value={ropaEntInput}
+                    onChange={(e) => setRopaEntInput(e.target.value)}
+                    placeholder="Ej. Camiseta — Blanca — $45.000"
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                  />
+                  <datalist id="ropa-ent-list">
+                    {ropas.map((r, i) => (
+                      <option
+                        key={`ent-${r.nombre}__${r.color}__${i}`}
+                        value={`${r.nombre} — ${r.color} — $${r.precio?.toLocaleString("es-CO")}`}
+                      />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-[#c2b48d]">Talla</label>
+                  <select
+                    value={tallaRopaEnt}
+                    onChange={(e) => setTallaRopaEnt(e.target.value)}
+                    disabled={!ropaEntSel}
+                    className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                  >
+                    <option value="">Selecciona…</option>
+                    {tallasRopaEntDisponibles.map((t) => (
+                      <option key={`ent-${t}`} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {tipoEntPicker === "bolso" && (
+              <div className="flex flex-col gap-1">
+                <label className="text-sm text-[#c2b48d]">Bolso (escribe para buscar)</label>
+                <input
+                  list="bolsos-ent-list"
+                  value={bolsoEntInput}
+                  onChange={(e) => setBolsoEntInput(e.target.value)}
+                  placeholder="Ej. Tote — Negro — $120.000"
+                  className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+                />
+                <datalist id="bolsos-ent-list">
+                  {bolsos.map((b) => (
+                    <option
+                      key={`ent-${b.id}`}
+                      value={`${b.nombre}${b.color ? ` — ${b.color}` : ""} — $${b.precio?.toLocaleString("es-CO")}`}
+                    />
+                  ))}
+                </datalist>
+                <p className="text-xs text-white/60">Talla “Única”.</p>
+              </div>
+            )}
+
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={addEntregado}
+                className="px-3 h-10 rounded-md bg-[#e0a200]/20 text-[#e0a200] hover:bg-[#e0a200]/30 border border-[#e0a200]/30"
+              >
+                Agregar al carrito
+              </button>
             </div>
 
-            {/* RESUMEN */}
-            <div className="lg:col-span-2 rounded-xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="rounded-md border border-[#e0a200]/30 p-3">
-                  <div className="text-sm text-[#c2b48d]">Precio recibido</div>
-                  <div className="text-2xl text-[#e0a200]">{fmtMoney(Number(precioRecibido || 0))}</div>
-                </div>
-                <div className="rounded-md border border-[#e0a200]/30 p-3">
-                  <div className="text-sm text-[#c2b48d]">Precio entregado</div>
-                  <div className="text-2xl text-[#e0a200]">{fmtMoney(Number(precioEntregado || 0))}</div>
-                </div>
-                <div className="rounded-md border border-[#e0a200]/30 p-3">
-                  <div className="text-sm text-[#c2b48d]">Diferencia a pagar</div>
-                  <div className="text-2xl text-[#e0a200]">{fmtMoney(diferencia_pago)}</div>
-                </div>
-              </div>
+            {/* Carrito */}
+            <div className="mt-3 rounded-md border border-white/15 p-3">
+              {entregados.length === 0 ? (
+                <div className="text-white/60 text-sm">Sin productos en el carrito.</div>
+              ) : (
+                <ul className="space-y-2">
+                  {entregados.map((it, idx) => (
+                    <li key={idx} className="flex items-center justify-between gap-3">
+                      <div className="text-sm text-white/90 truncate">
+                        {it.nombre}
+                        {it.color ? ` — ${it.color}` : ""}
+                        {it.talla && it.talla !== "Única" ? ` — Talla ${it.talla}` : ""}
+                        {" — "}
+                        {new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(it.precio)}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeEntregado(idx)}
+                        className="text-xs px-2 h-7 rounded-md border border-white/20 text-white hover:bg-white/10"
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-              <div className="mt-4 flex items-center justify-between">
-                <Link
-                  href="/devoluciones/registro"
-                  className="px-4 h-10 rounded-md border border-white/20 text-white hover:bg-white/10 inline-flex items-center"
-                >
-                  Cancelar
-                </Link>
-                <button
-                  type="submit"
-                  className="px-4 h-10 rounded-md bg-[#e0a200]/20 text-[#e0a200] hover:bg-[#e0a200]/30 border border-[#e0a200]/30"
-                >
-                  Guardar devolución
-                </button>
+              <div className="mt-3 text-sm text-[#c2b48d]">
+                Total entregado:&nbsp;
+                <span className="text-[#e0a200]">
+                  {new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(totalEntregado)}
+                </span>
               </div>
             </div>
-          </form>
-        )}
+          </div>
+
+          {/* Diferencia */}
+          <div className="rounded-md bg-black/60 border border-[#e0a200]/30 px-3 py-2">
+            <div className="text-sm text-[#c2b48d]">Diferencia (entregado - recibido)</div>
+            <div className="mt-1 text-[#e0a200] text-lg">
+              {new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(
+                Number.isFinite(diferencia) ? diferencia : 0
+              )}
+            </div>
+          </div>
+
+          {/* Acciones */}
+          <div className="flex justify-end gap-2 mt-2">
+            <Link
+              href="/devoluciones/registro"
+              className="px-4 py-2 rounded-md border border-white/20 text-white hover:bg-white/10"
+            >
+              Cancelar
+            </Link>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 rounded-md bg-[#e0a200]/20 text-[#e0a200] hover:bg-[#e0a200]/30 border border-[#e0a200]/30 disabled:opacity-60"
+            >
+              Crear devolución
+            </button>
+          </div>
+        </form>
       </div>
     </AppLayout>
   );

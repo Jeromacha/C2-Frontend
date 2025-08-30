@@ -1,4 +1,3 @@
-// src/pages/devoluciones/registro/index.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AppLayout from "@/components/layout/AppLayout";
@@ -14,6 +13,7 @@ import {
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
+// ===== Utils =====
 function fmtMoney(n?: number) {
   const v = Number(n ?? 0);
   return `$${v.toLocaleString("es-CO", { maximumFractionDigits: 0 })}`;
@@ -50,6 +50,11 @@ function startWeekday(year: number, monthIdx: number) {
   return new Date(year, monthIdx, 1).getDay();
 }
 
+// Catálogos para resolver nombres si recibimos id
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+const apiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
+
+// ===== Mini calendario =====
 function MiniCalendar({
   selectedYMD,
   onSelect,
@@ -60,11 +65,11 @@ function MiniCalendar({
   onClose: () => void;
 }) {
   const [viewYear, setViewYear] = useState<number>(() => {
-    const [y] = selectedYMD.split("-").map(Number);
+    const [y] = selectedYMD.split("-").map((n) => Number(n));
     return Number.isFinite(y) ? y : new Date().getFullYear();
   });
   const [viewMonth, setViewMonth] = useState<number>(() => {
-    const [, m] = selectedYMD.split("-").map(Number);
+    const [, m] = selectedYMD.split("-").map((n) => Number(n));
     return Number.isFinite(m) ? m - 1 : new Date().getMonth();
   });
 
@@ -91,7 +96,7 @@ function MiniCalendar({
   for (let i = 0; i < start; i++) cells.push({});
   for (let d = 1; d <= dim; d++) cells.push({ day: d });
 
-  const [selY, selM, selD] = selectedYMD.split("-").map(Number);
+  const [selY, selM, selD] = selectedYMD.split("-").map((n) => Number(n));
 
   return (
     <div className="w-[280px] rounded-md bg-black/80 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_10px_30px_rgba(255,234,7,0.12)] p-3">
@@ -169,12 +174,124 @@ function MiniCalendar({
   );
 }
 
+// ===== Helpers para columnas =====
+function isBolsoItemLabel(label: string) {
+  const s = (label || "").toLowerCase();
+  return s.includes("bolso") || s.includes("tote") || s.includes("única");
+}
+
+// divide por ; , / | · y respeta espacios
+function splitList(str?: string) {
+  if (!str) return [];
+  return String(str)
+    .split(/[;,/|·]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isNumericId(s: string) {
+  return /^\d+$/.test(s.trim());
+}
+
+/**
+ * Construye los textos para la columna "Entregado" emparejando por índice:
+ * - Zapato: producto_entregado = id numérico -> resuelve nombre/color; muestra "— Talla X"
+ * - Ropa:   producto_entregado = nombre       -> usa color_entregado global; "— Talla X"
+ * - Bolso:  producto_entregado = id string   -> resuelve nombre/color; oculta Talla Única
+ */
+function buildEntregadosView(
+  row: any,
+  lookupZapato: (id?: string) => string | undefined,
+  lookupBolso: (id?: string) => string | undefined
+): string[] {
+  const items = splitList(row.producto_entregado);
+  const tallas = splitList(row.talla_entregada);
+  const colorRopaGlobal = (row.color_entregado || "").toString().trim();
+
+  const usePerItem = tallas.length === items.length && items.length > 0;
+  const getTalla = (idx: number) =>
+    (usePerItem ? tallas[idx] : row.talla_entregada || "").toString().trim();
+
+  return items.map((raw, i) => {
+    const producto = raw.toString().trim();
+    const talla = getTalla(i);
+
+    // Zapato → id numérico
+    if (isNumericId(producto)) {
+      const name = lookupZapato(producto) || `#${producto}`;
+      return talla && talla.toLowerCase() !== "única" ? `${name} — Talla ${talla}` : name;
+    }
+
+    // Bolso → intentar id exacto (no numérico), si existe en catálogo
+    const bolsoName = lookupBolso(producto);
+    if (bolsoName) {
+      // oculta “Talla Única”
+      return bolsoName;
+    }
+
+    // Ropa → nombre, usa color_entregado global
+    const base = colorRopaGlobal ? `${producto} — ${colorRopaGlobal}` : producto;
+    if (talla && talla.toLowerCase() !== "única" && talla.toLowerCase() !== "varios") {
+      return `${base} — Talla ${talla}`;
+    }
+    return base;
+  });
+}
+
+/**
+ * Extrae "Nombre" y "Talla" para RECIBIDO (visual), ocultando talla si es Única/bolso.
+ */
+function formatItemWithTalla(
+  rawItem: string,
+  perItemTalla?: string,
+  tallaGlobal?: string
+) {
+  const item = rawItem.trim();
+
+  // si ya viene la talla en texto:
+  const reDash = /(.*?)[\s–—-]+Talla\s*([^\s).;]+)/i;
+  const reParen = /(.*)\(\s*Talla\s*([^)]+)\s*\)\s*$/i;
+
+  let name = item;
+  let talla: string | undefined;
+
+  const m1 = item.match(reDash);
+  if (m1) {
+    name = m1[1].trim();
+    talla = (m1[2] || "").trim();
+  } else {
+    const m2 = item.match(reParen);
+    if (m2) {
+      name = m2[1].trim();
+      talla = (m2[2] || "").trim();
+    }
+  }
+
+  // preferir talla por índice si no había
+  if (!talla && perItemTalla) talla = perItemTalla.trim();
+
+  // si aún no, usar talla global válida
+  if (!talla) {
+    const tg = (tallaGlobal || "").trim().toLowerCase();
+    if (tg && tg !== "varios" && tg !== "única") talla = tallaGlobal;
+  }
+
+  // Ocultar si bolso o Única
+  const hide =
+    !talla ||
+    talla.toLowerCase() === "única" ||
+    isBolsoItemLabel(`${name} ${talla}`);
+
+  return hide ? name : `${name} — Talla ${talla}`;
+}
+
+// ===== Página =====
 export default function RegistroDevolucionesPage() {
   const [rows, setRows] = useState<Devolucion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const [day, setDay] = useState<string>(toISODateInput(new Date()));
+
   const [calOpen, setCalOpen] = useState(false);
   const calBtnRef = useRef<HTMLButtonElement | null>(null);
   const calPopRef = useRef<HTMLDivElement | null>(null);
@@ -196,51 +313,145 @@ export default function RegistroDevolucionesPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [calOpen]);
 
-  // Modal edición (solo observaciones si tu UpdateDevolucionDto lo permite; aquí lo mantenemos simple)
   const [openModal, setOpenModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<{ id?: number; observaciones?: string }>({});
+  const [form, setForm] = useState<{ id?: number; observaciones: string }>({
+    observaciones: "",
+  });
 
+  // Catálogo de zapatos para resolver nombre si producto_recibido / entregado es id
+  type ZapatoItem = { id: number; nombre: string; color: string };
+  const [zapatos, setZapatos] = useState<ZapatoItem[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const zap = await fetch(apiUrl("/zapatos")).then((r) => (r.ok ? r.json() : []));
+        if (!alive) return;
+        setZapatos(Array.isArray(zap) ? zap : []);
+      } catch {
+        /* silencioso */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function lookupZapatoNameById(idStr?: string) {
+    if (!idStr) return undefined;
+    const id = Number(idStr);
+    if (!Number.isFinite(id)) return undefined;
+    const z = zapatos.find((x) => Number(x.id) === id);
+    return z ? `${z.nombre}${z.color ? ` — ${z.color}` : ""}` : undefined;
+  }
+
+  // ✅ NUEVO: catálogo de bolsos para resolver id → nombre/color
+  type BolsoItem = { id: string; nombre: string; color?: string };
+  const [bolsos, setBolsos] = useState<BolsoItem[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await fetch(apiUrl("/bolsos")).then((r) => (r.ok ? r.json() : []));
+        if (!alive) return;
+        setBolsos(Array.isArray(list) ? list : []);
+      } catch {
+        /* silencioso */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function lookupBolsoNameById(id?: string) {
+    if (!id) return undefined;
+    const b = bolsos.find((x) => String(x.id) === String(id));
+    return b ? `${b.nombre}${b.color ? ` — ${b.color}` : ""}` : undefined;
+  }
+
+  // Expanded rows (lista de entregados)
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const toggleExpanded = (id: number) =>
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  // ===== Columnas =====
   const columns = [
-    {
-      key: "recibido",
-      label: "Recibido (devuelto)",
-      className: "max-w-[280px] truncate",
-      render: (_: any, r: any) => {
-        const prod = r.producto_recibido ?? "—";
-        const color = r.color_recibido ? `, ${r.color_recibido}` : "";
-        const talla = r.talla_recibida ? `, Talla ${r.talla_recibida}` : "";
-        return prod === "—" ? "—" : `${prod}${color}${talla}`;
-      },
-    },
-    {
-      key: "precio_recibido",
-      label: "Precio recibido",
-      className: "max-w-[130px] truncate",
-      render: (v: number) => fmtMoney(v),
-    },
     {
       key: "entregado",
       label: "Entregado",
-      className: "max-w-[280px] truncate",
+      className: "max-w-[420px] truncate",
       render: (_: any, r: any) => {
-        const prod = r.producto_entregado ?? "—";
-        const color = r.color_entregado ? `, ${r.color_entregado}` : "";
-        const talla = r.talla_entregada ? `, Talla ${r.talla_entregada}` : "";
-        return prod === "—" ? "—" : `${prod}${color}${talla}`;
+        const items = buildEntregadosView(r, lookupZapatoNameById, lookupBolsoNameById);
+        if (items.length === 0) return "—";
+        const isOpen = !!expanded[r.id];
+        if (!isOpen) {
+          const first = items[0];
+          const rest = items.length - 1;
+          const tooLong = first.length > 48 || items.length > 1;
+          if (!tooLong) return first;
+          return (
+            <span className="inline-flex items-center gap-2">
+              <span className="truncate">
+                {first}
+                {rest > 0 ? ` … (+${rest})` : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => toggleExpanded(r.id)}
+                className="text-xs px-2 h-7 rounded-md border border-white/20 text-white hover:bg-white/10"
+              >
+                Mostrar todos
+              </button>
+            </span>
+          );
+        }
+        return (
+          <div className="space-y-1">
+            <ul className="list-disc ml-5">
+              {items.map((it, i) => (
+                <li key={i} className="whitespace-normal">
+                  {it}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => toggleExpanded(r.id)}
+              className="mt-1 text-xs px-2 h-7 rounded-md border border-white/20 text-white hover:bg-white/10"
+            >
+              Ocultar
+            </button>
+          </div>
+        );
       },
     },
     {
-      key: "precio_entregado",
-      label: "Precio entregado",
-      className: "max-w-[130px] truncate",
-      render: (v: number) => fmtMoney(v),
+      key: "recibido",
+      label: "Recibido (devuelto)",
+      className: "max-w-[320px] truncate",
+      render: (_: any, r: any) => {
+        // Mostrar NOMBRE + (color) + talla del recibido.
+        let prod = r.producto_recibido ?? r.producto ?? r.nombre_producto ?? "";
+        const talla = String(r.talla_recibida ?? r.talla ?? "").trim();
+        const isZapId = /^\d+$/.test(String(prod));
+
+        if ((!prod || isZapId) && (r.tipo === "zapato" || isZapId)) {
+          const name = lookupZapatoNameById(String(prod));
+          if (name) prod = name;
+        }
+
+        if (!prod) return "—";
+        const hideTalla = !talla || talla.toLowerCase() === "única" || isBolsoItemLabel(`${prod} ${talla}`);
+        return hideTalla ? prod : `${prod} — Talla ${talla}`;
+      },
     },
     {
       key: "diferencia_pago",
       label: "Diferencia",
-      className: "max-w-[120px] truncate",
-      render: (v: number) => fmtMoney(v),
+      className: "max-w-[160px] truncate",
+      render: (v: number) => (v != null ? fmtMoney(v) : "—"),
     },
     {
       key: "usuario",
@@ -261,17 +472,21 @@ export default function RegistroDevolucionesPage() {
     },
   ] as const;
 
+  // ===== Data load =====
   async function loadForDay(ymd: string) {
     try {
       setLoading(true);
       setError("");
       const { start, end } = dayBoundsCO(ymd);
-      const token = typeof window !== "undefined" ? (localStorage.getItem("token") || undefined) : undefined;
-      const data = await getDevolucionesByDateRange(start, end, token);
+      const data = await getDevolucionesByDateRange(start, end);
       setRows(Array.isArray(data) ? data : []);
     } catch (e: any) {
       console.error(e);
-      setError(e?.message || "No se pudieron cargar las devoluciones.");
+      setError(
+        e?.message?.includes("HTTP")
+          ? `No se pudieron cargar las devoluciones.\n${e.message}`
+          : "No se pudieron cargar las devoluciones. Verifica la API o CORS."
+      );
     } finally {
       setLoading(false);
     }
@@ -289,63 +504,77 @@ export default function RegistroDevolucionesPage() {
   }
 
   function openEdit(row: any) {
-    setForm({ id: row.id });
+    setForm({
+      id: row.id,
+      observaciones: String(row.observaciones ?? ""),
+    });
     setOpenModal(true);
   }
 
   async function onDeleteRow(row: any) {
-    if (!row?.id) return;
-    if (!confirm(`¿Eliminar devolución #${row.id}?`)) return;
-    const token = typeof window !== "undefined" ? (localStorage.getItem("token") || undefined) : undefined;
+    if (!row?.id) {
+      alert("La devolución no tiene id.");
+      return;
+    }
+    if (!confirm(`¿Eliminar la devolución #${row.id}?`)) return;
     try {
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      await deleteDevolucion(row.id, token);
-    } catch {
+      await deleteDevolucion(row.id);
+    } catch (e) {
+      console.error(e);
       alert("No se pudo eliminar la devolución.");
-      await loadForDay(day);
+      try {
+        const { start, end } = dayBoundsCO(day);
+        const data = await getDevolucionesByDateRange(start, end);
+        setRows(Array.isArray(data) ? data : []);
+      } catch {}
     }
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (saving || !form.id) return;
-    const token = typeof window !== "undefined" ? (localStorage.getItem("token") || undefined) : undefined;
+
     try {
       setSaving(true);
-      // Si tu UpdateDevolucionDto solo permite algunos campos, ajusta aquí.
-      const updated = await updateDevolucion(form.id, {}, token);
-      setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      const payload: any = { observaciones: form.observaciones || "" };
+      const updated = await updateDevolucion(form.id, payload);
+      setRows((prev: any[]) => prev.map((r) => (r.id === updated.id ? updated : r)));
       setOpenModal(false);
     } catch (e: any) {
       console.error(e);
-      alert(`No se pudo guardar.\n${e?.message || "Error"}`);
+      alert(`No se pudo guardar.\n${e?.message || "Error desconocido"}`);
     } finally {
       setSaving(false);
     }
   }
 
-  // Búsqueda local
+  // ===== Búsqueda local =====
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
     const qlc = q.trim().toLowerCase();
-    if (!qlc) return rows;
-    return rows.filter((r: any) => {
+    if (!qlc) return rows as any[];
+
+    return (rows as any[]).filter((r) => {
       const campos = [
-        r.producto_recibido,
-        r.color_recibido,
-        r.talla_recibida,
-        r.producto_entregado,
-        r.color_entregado,
-        r.talla_entregada,
-        r?.usuario?.nombre,
-        r.id,
+        r.producto_recibido ?? r.producto ?? r.nombre_producto ?? "",
+        r.color_recibido ?? r.color ?? "",
+        r.talla_recibida ?? r.talla ?? "",
+        r.producto_entregado ?? "",
+        r.color_entregado ?? "",
+        r.talla_entregada ?? "",
+        r?.usuario?.nombre ?? r?.usuario_nombre ?? r?.usuario_id ?? "",
+        r.id ?? "",
+        r.observaciones ?? "",
       ]
         .filter(Boolean)
         .map((x: any) => String(x).toLowerCase());
+
       return campos.some((c: string) => c.includes(qlc));
     });
   }, [rows, q]);
 
+  // ===== Render =====
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto px-4 py-6">
@@ -363,13 +592,13 @@ export default function RegistroDevolucionesPage() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar por producto, talla, usuario o #id…"
+                placeholder="Buscar por producto, talla, usuario, #id u observaciones…"
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
               />
             </div>
           </div>
 
-          {/* Fecha (minicalendario) */}
+          {/* Fecha */}
           <div className="sm:justify-self-center w-full">
             <div className="relative flex items-center gap-2 w-full max-w-[320px] mx-auto">
               <span className="text-sm text-[#c2b48d]">Día</span>
@@ -378,6 +607,7 @@ export default function RegistroDevolucionesPage() {
                 type="button"
                 onClick={() => setCalOpen((o) => !o)}
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none text-white/90 text-left flex items-center justify-between"
+                title="Selecciona una fecha"
               >
                 <span>
                   {dayNameCO(day)} — {day}
@@ -385,27 +615,37 @@ export default function RegistroDevolucionesPage() {
                 <span className="material-symbols-outlined text-[#e0a200]">event</span>
               </button>
               {calOpen && (
-                <div ref={calPopRef} className="absolute z-50 left-0 right-0 top-[44px] flex justify-center">
-                  <MiniCalendar selectedYMD={day} onSelect={onPickDate} onClose={() => setCalOpen(false)} />
+                <div
+                  ref={calPopRef}
+                  className="absolute z-50 left-0 right-0 top={44px} flex justify-center"
+                >
+                  <MiniCalendar
+                    selectedYMD={day}
+                    onSelect={onPickDate}
+                    onClose={() => setCalOpen(false)}
+                  />
                 </div>
               )}
             </div>
           </div>
 
-          {/* Nueva devolución */}
+          {/* Agregar devolución */}
           <div className="sm:justify-self-end">
             <Link
               href="/devoluciones/nueva"
               className="h-10 px-4 rounded-md bg-[#e0a200]/10 text-[#e0a200] hover:bg-[#e0a200]/20 transition inline-flex items-center"
+              title="Registrar devolución"
             >
               Registrar devolución
             </Link>
           </div>
         </div>
 
+        {/* Estado */}
         {loading && <div className="mb-3 text-sm text-white/70">Cargando devoluciones…</div>}
         {error && <div className="mb-3 text-sm text-red-400 whitespace-pre-wrap">{error}</div>}
 
+        {/* Tabla */}
         <div className="relative overflow-visible">
           <Table2
             rows={filtered as any}
@@ -418,6 +658,7 @@ export default function RegistroDevolucionesPage() {
         </div>
       </div>
 
+      {/* Modal: editar observaciones */}
       <Modal
         open={openModal}
         onClose={() => setOpenModal(false)}
@@ -442,8 +683,15 @@ export default function RegistroDevolucionesPage() {
         }
       >
         <form id="dev-form" onSubmit={onSubmit} className="grid grid-cols-1 gap-4">
-          <div className="text-sm text-white/70">
-            (Aquí no hay campos editables definidos; ajusta según tu <code>UpdateDevolucionDto</code>.)
+          <div className="flex flex-col gap-1">
+            <label className="text-sm text-[#c2b48d]">Observaciones (opcional)</label>
+            <input
+              value={form.observaciones}
+              onChange={(e) => setForm((f) => ({ ...f, observaciones: e.target.value }))}
+              disabled={saving}
+              className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
+              placeholder="(Opcional)"
+            />
           </div>
         </form>
       </Modal>

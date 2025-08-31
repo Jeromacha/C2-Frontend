@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { getCurrentUser } from '@/lib/auth';
+import { isAdmin } from '@/lib/roles';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const router = useRouter();
+
+  const me = getCurrentUser();
+  const soyAdmin = isAdmin(me?.rol);
 
   const handleDropdown = (menu: string) => {
     setOpenDropdown(openDropdown === menu ? null : menu);
@@ -17,7 +22,8 @@ export default function Navbar() {
     if (router.asPath !== href) await router.push(href);
   };
 
-  const menuItems = [
+  // Menú base (igual al tuyo)
+  const baseMenuItems = [
     {
       label: "Inventario",
       href: "#",
@@ -31,7 +37,7 @@ export default function Navbar() {
       label: "Ventas",
       href: "#",
       subItems: [
-        { label: "Agregar venta", href: "/ventas/nueva" },
+        { label: "Agregar venta",          href: "/ventas/nueva" },
         { label: "Ver registro de ventas", href: "/ventas/registro" }
       ],
     },
@@ -39,7 +45,7 @@ export default function Navbar() {
       label: "Devoluciones",
       href: "#",
       subItems: [
-        { label: "Registrar devolución", href: "/devoluciones/nueva" },
+        { label: "Registrar devolución",         href: "/devoluciones/nueva" },
         { label: "Ver registro de devoluciones", href: "/devoluciones/registro" }
       ],
     },
@@ -47,11 +53,25 @@ export default function Navbar() {
       label: "Ingreso de mercancía",
       href: "#",
       subItems: [
-        { label: "Registrar ingreso", href: "/ingresos/nueva" },
+        { label: "Registrar ingreso",       href: "/ingresos/nueva" },
         { label: "Ver registro de ingresos", href: "/ingresos/registro" }
       ],
     },
   ];
+
+  // Si es ADMIN, agregamos la sección Admin -> Usuarios
+  const menuItems = soyAdmin
+    ? [
+        ...baseMenuItems,
+        {
+          label: "Admin",
+          href: "#",
+          subItems: [
+            { label: "Usuarios", href: "/admin/usuarios" },
+          ],
+        },
+      ]
+    : baseMenuItems;
 
   return (
     <>

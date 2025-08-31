@@ -6,6 +6,8 @@ import Table2 from "@/components/ui/table2";
 import { Qwitcher_Grypen } from "next/font/google";
 import type { EntradaMercancia } from "@/services/entradas";
 import { getEntradasByDateRange, deleteEntrada } from "@/services/entradas";
+import { getCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/roles";
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
@@ -172,6 +174,9 @@ function userNameFromRow(row: any): string | undefined {
 }
 
 export default function RegistroIngresosPage() {
+  const me = getCurrentUser();
+  const soyAdmin = isAdmin(me?.rol);
+
   // Catálogos para renderizar nombres/colores por id (detalle)
   const [zapatos, setZapatos] = useState<any[]>([]);
   const [bolsos, setBolsos] = useState<any[]>([]);
@@ -294,8 +299,8 @@ export default function RegistroIngresosPage() {
     return "—";
   }
 
-  // Columnas (Usuario: como ventas, sin fallback a #id)
-  const columns = [
+  // Columnas base (sin cambios en render)
+  const baseColumns = [
     {
       key: "detalle",
       label: "Detalle",
@@ -334,6 +339,9 @@ export default function RegistroIngresosPage() {
       render: (_: any, row: any) => String(row?.tipo ?? "—").toUpperCase(),
     },
   ] as const;
+
+  // 👉 Ocultar "Usuario" si NO es admin (sin useMemo para no congelar renderers)
+  const columns = soyAdmin ? baseColumns : baseColumns.slice().filter((c) => c.key !== "usuario");
 
   // Búsqueda rápida local (usa nombre de usuario, nunca id)
   const [q, setQ] = useState("");

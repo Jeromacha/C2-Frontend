@@ -10,6 +10,8 @@ import {
   updateDevolucion,
   deleteDevolucion,
 } from "@/services/devoluciones";
+import { getCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/roles";
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
@@ -287,6 +289,9 @@ function formatItemWithTalla(
 
 // ===== Página =====
 export default function RegistroDevolucionesPage() {
+  const me = getCurrentUser();
+  const soyAdmin = isAdmin(me?.rol);
+
   const [rows, setRows] = useState<Devolucion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -377,7 +382,7 @@ export default function RegistroDevolucionesPage() {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   // ===== Columnas =====
-  const columns = [
+  const baseColumns = [
     {
       key: "entregado",
       label: "Entregado",
@@ -471,6 +476,9 @@ export default function RegistroDevolucionesPage() {
       },
     },
   ] as const;
+
+  // 👉 columnas finales según rol (sin useMemo para no “congelar” renderers)
+  const columns = soyAdmin ? baseColumns : [...baseColumns].filter((c) => c.key !== "usuario");
 
   // ===== Data load =====
   async function loadForDay(ymd: string) {

@@ -7,6 +7,8 @@ import Modal from "@/components/ui/Modal";
 import { Qwitcher_Grypen } from "next/font/google";
 import type { Venta } from "@/services/ventas";
 import { getVentasByDateRange, getGanancias, updateVenta, deleteVenta } from "@/services/ventas";
+import { getCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/roles";
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
@@ -18,13 +20,19 @@ function toISODateInput(d: Date) {
   const pad = (x: number) => String(x).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-// Rango del día en zona "America/Bogota" para evitar corrimientos
+
+// Rango del día en Bogotá -> devuelto en UTC (Z) para evitar corrimientos en la DB
 function dayBoundsCO(ymd: string) {
+  // Interpretamos el comienzo y final del día *en Bogotá*
+  const startLocal = new Date(`${ymd}T00:00:00-05:00`);
+  const endLocal = new Date(`${ymd}T23:59:59.999-05:00`);
+  // Enviamos en UTC a la API (Z) para que el backend compare correctamente
   return {
-    start: `${ymd}T00:00:00-05:00`,
-    end: `${ymd}T23:59:59.999-05:00`,
+    start: startLocal.toISOString(),
+    end: endLocal.toISOString(),
   };
 }
+
 function dayNameCO(ymd: string) {
   const dt = new Date(`${ymd}T12:00:00-05:00`); // mediodía para evitar bordes
   const formatter = new Intl.DateTimeFormat("es-CO", {
@@ -198,6 +206,9 @@ function MiniCalendar({
 }
 
 export default function RegistroVentasPage() {
+  const me = getCurrentUser();
+  const soyAdmin = isAdmin(me?.rol);
+
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -239,8 +250,8 @@ export default function RegistroVentasPage() {
     observaciones: "",
   });
 
-  // Columnas (sin hora; mostramos Fecha)
-  const columns = [
+  // Columnas base (incluye Usuario)
+  const baseColumns = [
     {
       key: "producto",
       label: "Producto",
@@ -280,6 +291,13 @@ export default function RegistroVentasPage() {
       },
     },
   ] as const;
+
+  // Columnas finales según rol (si no es admin, ocultar "usuario")
+  const columns = useMemo(
+    () => (soyAdmin ? baseColumns : (baseColumns.slice() as any[]).filter((c) => c.key !== "usuario")),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [soyAdmin]
+  );
 
   async function loadForDay(ymd: string) {
     try {
@@ -375,7 +393,7 @@ export default function RegistroVentasPage() {
     }
   }
 
-  // Búsqueda rápida local (sin hora)
+  // Búsqueda rápida local (condicionada por rol)
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
     const qlc = q.trim().toLowerCase();
@@ -385,16 +403,21 @@ export default function RegistroVentasPage() {
       const idTxt = String(v.id ?? "");
       const prod = String(v.producto ?? v.nombre_producto ?? "").toLowerCase();
       const talla = String(v.talla ?? "").toLowerCase();
-      const user = String(v?.usuario?.nombre ?? v?.usuario_nombre ?? v?.usuario_id ?? "").toLowerCase();
-      return (
-        obs.includes(qlc) ||
-        idTxt.includes(qlc) ||
-        prod.includes(qlc) ||
-        talla.includes(qlc) ||
-        user.includes(qlc)
-      );
+
+      if (soyAdmin) {
+        const user = String(v?.usuario?.nombre ?? v?.usuario_nombre ?? v?.usuario_id ?? "").toLowerCase();
+        return (
+          obs.includes(qlc) ||
+          idTxt.includes(qlc) ||
+          prod.includes(qlc) ||
+          talla.includes(qlc) ||
+          user.includes(qlc)
+        );
+      } else {
+        return obs.includes(qlc) || idTxt.includes(qlc) || prod.includes(qlc) || talla.includes(qlc);
+      }
     });
-  }, [ventas, q]);
+  }, [ventas, q, soyAdmin]);
 
   return (
     <AppLayout>
@@ -415,7 +438,11 @@ export default function RegistroVentasPage() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar por producto, talla, usuario, #id u observaciones…"
+                placeholder={
+                  soyAdmin
+                    ? "Buscar por producto, talla, usuario, #id u observaciones…"
+                    : "Buscar por producto, talla, #id u observaciones…"
+                }
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
               />
             </div>

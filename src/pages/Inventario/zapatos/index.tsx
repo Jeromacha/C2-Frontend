@@ -1,3 +1,4 @@
+// src/pages/Inventario/zapatos/index.tsx
 import AppLayout from "@/components/layout/AppLayout";
 import Table2 from "@/components/ui/table2";
 import Modal from "@/components/ui/Modal";
@@ -19,11 +20,8 @@ const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 const totalTallas = (z?: Zapato) =>
   (z?.tallas ?? []).reduce((acc, t) => acc + (Number(t.cantidad) || 0), 0);
 
-// lista típica de tallas (ajústala si quieres)
-const COMMON_SIZES = [
-  35, 35.5, 36, 36.5, 37, 37.5, 38, 38.5, 39, 39.5,
-  40, 40.5, 41,
-];
+// lista típica de tallas
+const COMMON_SIZES = [35, 35.5, 36, 36.5, 37, 37.5, 38, 38.5, 39, 39.5, 40, 40.5, 41];
 
 export default function InventarioZapatos() {
   // --- Data/estado remoto
@@ -46,9 +44,15 @@ export default function InventarioZapatos() {
         setZapatos(zs ?? []);
         setCategorias(cats ?? []);
         setError("");
-      } catch (e) {
-        setError("No se pudo cargar el inventario de zapatos.");
-        console.error(e);
+      } catch (e: any) {
+        const status = e?.response?.status;
+        const data = e?.response?.data;
+        setError(
+          `No se pudo cargar el inventario de zapatos${
+            status ? ` (HTTP ${status})` : ""
+          }${data ? `: ${JSON.stringify(data)}` : ""}.`
+        );
+        console.error("Error cargando zapatos/categorías:", e?.response ?? e);
       } finally {
         if (alive) {
           setLoading(false);
@@ -67,7 +71,6 @@ export default function InventarioZapatos() {
 
   const openTallasModal = (row: Zapato) => {
     setTallasTarget(row);
-    // seed cantidades del modal con las tallas existentes
     const map: Record<string, number | ""> = {};
     COMMON_SIZES.forEach((s) => (map[String(s)] = ""));
     (row.tallas ?? []).forEach((t) => {
@@ -92,11 +95,10 @@ export default function InventarioZapatos() {
             openTallasModal(row);
           }}
           className="h-8 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 text-sm"
-          title="Ver tallas"
-        >
-          Ver
-        </button>
-      ),
+          >
+            Ver
+          </button>
+        ),
     },
     {
       key: "cantidadTotal",
@@ -176,12 +178,7 @@ export default function InventarioZapatos() {
       const hayMax = max === undefined || z.precio <= max;
 
       const total = totalTallas(z);
-      const hayCantidad =
-        qtyFilter === ""
-          ? true
-          : qtyFilter === "con"
-          ? total > 0
-          : total === 0;
+      const hayCantidad = qtyFilter === "" ? true : qtyFilter === "con" ? total > 0 : total === 0;
 
       return hayTexto && hayCat && hayMin && hayMax && hayCantidad;
     });
@@ -194,6 +191,45 @@ export default function InventarioZapatos() {
     setQtyFilter("");
   };
 
+  // ===== Compatibilidad con Table2 (aceptar row o id) =====
+  function resolveRow(rowOrId: any): Zapato | undefined {
+    if (!rowOrId) return undefined;
+    if (typeof rowOrId === "number") {
+      return zapatos.find((z) => z.id === rowOrId);
+    }
+    if (typeof rowOrId === "string") {
+      const num = Number(rowOrId);
+      if (!Number.isNaN(num)) return zapatos.find((z) => z.id === num);
+    }
+    if (typeof rowOrId === "object") {
+      if ("id" in rowOrId) {
+        const num = Number((rowOrId as any).id);
+        if (!Number.isNaN(num)) return zapatos.find((z) => z.id === num) || (rowOrId as Zapato);
+      }
+      return rowOrId as Zapato;
+    }
+    return undefined;
+  }
+
+  const handleEdit = (rowOrId: any) => {
+    const row = resolveRow(rowOrId);
+    if (!row) {
+      alert("No se pudo identificar el zapato para editar.");
+      return;
+    }
+    openEdit(row);
+  };
+
+  const handleDelete = (rowOrId: any) => {
+    const row = resolveRow(rowOrId);
+    if (!row) {
+      alert("No se pudo identificar el zapato para eliminar.");
+      return;
+    }
+    onDelete(row);
+  };
+  // =======================================================
+
   // --- Modal (crear/editar) de zapato
   const [openModal, setOpenModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -202,8 +238,8 @@ export default function InventarioZapatos() {
   const [form, setForm] = useState<{
     id: number | "";
     nombre: string;
-    ubicacion: string;        // opcional
-    imagen_url: string;       // opcional
+    ubicacion: string;   // opcional a nivel de negocio, pero enviaremos "" si no se llena
+    imagen_url: string;  // idem
     precio: number | "";
     categoriaNombre: string;
     observaciones: string | "";
@@ -236,8 +272,8 @@ export default function InventarioZapatos() {
     setForm({
       id: row.id,
       nombre: row.nombre ?? "",
-      ubicacion: row.ubicacion ?? "",      // puede venir vacío
-      imagen_url: row.imagen_url ?? "",    // puede venir vacío
+      ubicacion: (row as any)?.ubicacion ?? "",
+      imagen_url: (row as any)?.imagen_url ?? "",
       precio: (row.precio ?? 0) as number,
       categoriaNombre: row.categoriaNombre ?? "",
       observaciones: (row.observaciones ?? "") as string,
@@ -265,45 +301,66 @@ export default function InventarioZapatos() {
     if (saving) return;
     setSaving(true);
     try {
+      // ID requerido
+      if (form.id === "" || isNaN(Number(form.id))) {
+        alert("El ID numérico es obligatorio.");
+        setSaving(false);
+        return;
+      }
+      if (!form.nombre.trim()) {
+        alert("El nombre es obligatorio.");
+        setSaving(false);
+        return;
+      }
       if (form.precio === "" || isNaN(Number(form.precio))) {
         alert("El precio es obligatorio.");
         setSaving(false);
         return;
       }
-      // construir payload OMITIENDO opcionales vacíos
-      const basePayload = {
-        nombre: form.nombre,
+      if (!form.categoriaNombre.trim()) {
+        alert("Selecciona una categoría.");
+        setSaving(false);
+        return;
+      }
+      if (zapatos.some((z) => z.id === Number(form.id)) && !editMode) {
+        alert("Ya existe un zapato con ese ID.");
+        setSaving(false);
+        return;
+      }
+
+      // 🚩 CAMBIO CLAVE: enviar SIEMPRE las claves opcionales con "" si vienen vacías
+      const payloadCreateOrPutBase = {
+        nombre: form.nombre.trim(),
         precio: Number(form.precio),
         categoriaNombre: form.categoriaNombre,
-        ...(form.ubicacion ? { ubicacion: form.ubicacion } : {}),
-        ...(form.imagen_url ? { imagen_url: form.imagen_url } : {}),
-        ...(form.observaciones ? { observaciones: form.observaciones } : {}),
+        ubicacion: (form.ubicacion ?? "").trim(),          // <- "" si no se diligencia
+        imagen_url: (form.imagen_url ?? "").trim(),        // <- "" si no se diligencia
+        ...(form.observaciones !== undefined
+          ? { observaciones: (form.observaciones ?? "").trim() }
+          : {}),
       };
 
       if (editMode) {
-        const updated = await updateZapato(Number(form.id), basePayload);
+        const updated = await updateZapato(Number(form.id), payloadCreateOrPutBase);
         setZapatos((prev) => prev.map((z) => (z.id === updated.id ? updated : z)));
       } else {
-        if (form.id === "" || isNaN(Number(form.id))) {
-          alert("El ID numérico es obligatorio.");
-          setSaving(false);
-          return;
-        }
-        if (zapatos.some((z) => z.id === Number(form.id))) {
-          alert("Ya existe un zapato con ese ID.");
-          setSaving(false);
-          return;
-        }
         const created = await createZapato({
           id: Number(form.id),
-          ...basePayload,
-        } as any);
+          ...payloadCreateOrPutBase,
+        });
         setZapatos((prev) => [created, ...prev]);
       }
+
       setOpenModal(false);
-    } catch (e) {
-      alert("No se pudo guardar. Revisa que el backend esté accesible y los datos sean válidos.");
-      console.error(e);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const data = e?.response?.data;
+      console.error("Error guardando zapato:", e?.response ?? e);
+      alert(
+        `No se pudo guardar. Respuesta del servidor${
+          status ? ` (${status})` : ""
+        }:\n${data ? JSON.stringify(data, null, 2) : e?.message || "Error desconocido"}`
+      );
     } finally {
       setSaving(false);
     }
@@ -317,16 +374,16 @@ export default function InventarioZapatos() {
     if (!tallasTarget) return;
     setTallasSaving(true);
     try {
-      // mapa actual del backend
       const existing = new Map<number, number>();
-      (tallasTarget.tallas ?? []).forEach((t) => existing.set(Number(t.talla), Number(t.cantidad) || 0));
+      (tallasTarget.tallas ?? []).forEach((t) =>
+        existing.set(Number(t.talla), Number(t.cantidad) || 0)
+      );
 
-      // recorrer formulario
       for (const k of Object.keys(tallasForm)) {
         const talla = Number(k);
         const val = tallasForm[k];
         const cantidad = val === "" ? 0 : Number(val);
-        if (Number.isNaN(talla) || Number.isNaN(cantidad)) continue;
+        if (Number.isNaN(talla) || Number.isNaN(cantidad) || cantidad < 0) continue;
 
         if (existing.has(talla)) {
           const prev = existing.get(talla)!;
@@ -340,24 +397,25 @@ export default function InventarioZapatos() {
         }
       }
 
-      // actualizar estado local
       const newTallas = Object.entries(tallasForm)
         .map(([k, v]) => ({ talla: Number(k), cantidad: v === "" ? 0 : Number(v) }))
         .filter((t) => (t.cantidad ?? 0) > 0)
         .sort((a, b) => a.talla - b.talla);
 
       setZapatos((prev) =>
-        prev.map((z) =>
-          z.id === tallasTarget.id
-            ? { ...z, tallas: newTallas as any }
-            : z
-        )
+        prev.map((z) => (z.id === tallasTarget.id ? { ...z, tallas: newTallas as any } : z))
       );
 
       setTallasModalOpen(false);
-    } catch (e) {
-      console.error(e);
-      alert("No se pudieron guardar las tallas.");
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const data = e?.response?.data;
+      console.error("Error guardando tallas de zapato:", e?.response ?? e);
+      alert(
+        `No se pudieron guardar las tallas${
+          status ? ` (HTTP ${status})` : ""
+        }.\n${data ? JSON.stringify(data, null, 2) : e?.message || ""}`
+      );
     } finally {
       setTallasSaving(false);
     }
@@ -366,7 +424,7 @@ export default function InventarioZapatos() {
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto px-4 py-6">
-        {/* Título centrado con Qwitcher Grypen (ajuste móvil a 6xl) */}
+        {/* Título centrado */}
         <div className="mb-6 flex items-center justify-center">
           <h1 className={`${qwitcher.className} text-[#e0a200] text-6xl sm:text-8xl leading-none text-center`}>
             Zapatos
@@ -432,7 +490,7 @@ export default function InventarioZapatos() {
                   "
                 >
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Categoría (filtro rápido usando nombres presentes en la tabla) */}
+                    {/* Categoría */}
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-sm text-[#c2b48d] w-24 shrink-0">Categoría</span>
                       <select
@@ -442,7 +500,9 @@ export default function InventarioZapatos() {
                       >
                         <option value="">Todas</option>
                         {distinctCats.map((c) => (
-                          <option key={c} value={c}>{c}</option>
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -514,15 +574,16 @@ export default function InventarioZapatos() {
           </div>
         )}
 
-        {/* Tabla con acciones (wrapper evita que el kebab se corte) */}
+        {/* Tabla con acciones */}
         <div className="relative overflow-visible">
           <Table2
             rows={filtered as any}
             columns={columns as any}
             initialSortKey={"nombre"}
             showActions
-            onEdit={openEdit}
-            onDelete={onDelete}
+            onEdit={handleEdit as any}
+            onDelete={handleDelete as any}
+            {...({ onEditRow: handleEdit, onDeleteRow: handleDelete } as any)}
           />
         </div>
       </div>
@@ -552,7 +613,7 @@ export default function InventarioZapatos() {
         }
       >
         <form id="zapato-form" onSubmit={onSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* ID */}
+          {/* ID (obligatorio) */}
           <div className="flex flex-col gap-1">
             <label className="text-sm text-[#c2b48d]">ID</label>
             <input
@@ -583,7 +644,7 @@ export default function InventarioZapatos() {
             />
           </div>
 
-          {/* Categoría (Select desde service) */}
+          {/* Categoría */}
           <div className="flex flex-col gap-1">
             <label className="text-sm text-[#c2b48d]">Categoría</label>
             <select
@@ -623,7 +684,7 @@ export default function InventarioZapatos() {
             />
           </div>
 
-          {/* Ubicación (opcional) */}
+          {/* Ubicación (opcional → mandamos "" si vacío) */}
           <div className="flex flex-col gap-1">
             <label className="text-sm text-[#c2b48d]">Ubicación (opcional)</label>
             <input
@@ -635,7 +696,7 @@ export default function InventarioZapatos() {
             />
           </div>
 
-          {/* Imagen URL (opcional) */}
+          {/* Imagen URL (opcional → mandamos "" si vacío) */}
           <div className="flex flex-col gap-1">
             <label className="text-sm text-[#c2b48d]">Imagen URL (opcional)</label>
             <input
@@ -647,7 +708,7 @@ export default function InventarioZapatos() {
             />
           </div>
 
-          {/* Observaciones (opcional) */}
+          {/* Observaciones (opcional → mandamos "" si vacío) */}
           <div className="flex flex-col gap-1 sm:col-span-2">
             <label className="text-sm text-[#c2b48d]">Observaciones (opcional)</label>
             <input

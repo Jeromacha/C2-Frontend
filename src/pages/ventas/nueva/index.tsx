@@ -33,11 +33,6 @@ const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
 const apiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
 
-function toISODateInput(d: Date) {
-  const pad = (x: number) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 // Intenta sacar usuario_id automáticamente (JWT > localStorage)
 function getUsuarioIdAuto(): number | undefined {
   if (typeof window === "undefined") return undefined;
@@ -70,7 +65,6 @@ export default function NuevaVentaPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const [fecha, setFecha] = useState<string>(toISODateInput(new Date()));
   const [precio, setPrecio] = useState<number | "">("" as "");
   const [tipo, setTipo] = useState<TipoProducto>("zapato");
 
@@ -171,23 +165,17 @@ export default function NuevaVentaPage() {
         setSaving(false);
         return;
       }
-      if (!fecha || isNaN(new Date(fecha).getTime())) {
-        alert("La fecha es obligatoria.");
-        setSaving(false);
-        return;
-      }
       if (precio === "" || isNaN(Number(precio))) {
         alert("El precio es obligatorio.");
         setSaving(false);
         return;
       }
 
-      // DTO con fecha (el backend ya la acepta y persiste)
+      // DTO SIN fecha (igual que devoluciones). La DB pondrá CURRENT_TIMESTAMP (timestamptz).
       const payload: any = {
         tipo,
         precio: Number(precio),
         usuario_id: Number(uid),
-        fecha, // ⬅️ importante
       };
 
       if (tipo === "zapato") {
@@ -262,18 +250,6 @@ export default function NuevaVentaPage() {
           onSubmit={onSubmit}
           className="rounded-2xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_2px_10px_rgba(255,234,7,0.08)] p-5 grid grid-cols-1 gap-4"
         >
-          {/* Fecha */}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm text-[#c2b48d]">Fecha</label>
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-              required
-              className="h-11 rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40"
-            />
-          </div>
-
           {/* Tipo */}
           <div className="flex flex-col gap-1">
             <label className="text-sm text-[#c2b48d]">Tipo</label>
@@ -329,7 +305,7 @@ export default function NuevaVentaPage() {
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
-                <p className="text-xs text-white/60">Sólo tallas con stock &gt; 0.</p>
+                <p className="text-xs text:white/60">Sólo tallas con stock &gt; 0.</p>
               </div>
             </>
           )}

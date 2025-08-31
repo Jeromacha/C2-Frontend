@@ -11,13 +11,27 @@ import { isAdmin } from "@/lib/roles";
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
-/* ===== Utils de fecha (como ventas) ===== */
+/* ===== Utils de fecha ===== */
 function toISODateInput(d: Date) {
   const pad = (x: number) => String(x).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-function dayBoundsCO(ymd: string) {
-  return { start: `${ymd}T00:00:00-05:00`, end: `${ymd}T23:59:59.999-05:00` };
+// Rango amplio para traer TODO
+function fullRangeCO() {
+  return { start: `2000-01-01T00:00:00-05:00`, end: `2100-12-31T23:59:59.999-05:00` };
+}
+// YYYY-MM-DD local Bogotá (para filtrar localmente)
+function localYMD_CO(isoOrDate: string | Date): string {
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if (!d || isNaN(d.getTime())) return "";
+  const yyyy = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", year: "numeric" }).format(d);
+  const mm = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", month: "2-digit" }).format(d);
+  const dd = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit" }).format(d);
+  return `${yyyy}-${mm}-${dd}`;
+}
+function monthOf(isoOrDate: string | Date): string {
+  const ymd = localYMD_CO(isoOrDate);
+  return ymd ? ymd.slice(0, 7) : "";
 }
 function dayNameCO(ymd: string) {
   const dt = new Date(`${ymd}T12:00:00-05:00`);
@@ -38,14 +52,16 @@ function startWeekday(year: number, monthIdx: number) {
   return new Date(year, monthIdx, 1).getDay(); // 0=Dom
 }
 
-/* ===== Mini calendario (copiado de ventas) ===== */
+/* ===== Mini calendario (único: día o mes clic en título) ===== */
 function MiniCalendar({
   selectedYMD,
-  onSelect,
+  onSelectDay,
+  onSelectMonth,
   onClose,
 }: {
   selectedYMD: string;
-  onSelect: (ymd: string) => void;
+  onSelectDay: (ymd: string) => void;
+  onSelectMonth: (ym: string) => void;
   onClose: () => void;
 }) {
   const [viewYear, setViewYear] = useState<number>(() => {
@@ -65,12 +81,16 @@ function MiniCalendar({
   }
   function selectYMD(y: number, mIdx: number, d: number) {
     const pad = (x: number) => String(x).padStart(2, "0");
-    onSelect(`${y}-${pad(mIdx + 1)}-${pad(d)}`);
+    onSelectDay(`${y}-${pad(mIdx + 1)}-${pad(d)}`);
+    onClose();
+  }
+  function selectMonth(y: number, mIdx: number) {
+    const pad = (x: number) => String(x).padStart(2, "0");
+    onSelectMonth(`${y}-${pad(mIdx + 1)}`);
     onClose();
   }
   function selectToday() {
-    const today = new Date();
-    onSelect(toISODateInput(today));
+    onSelectDay(toISODateInput(new Date()));
     onClose();
   }
 
@@ -92,9 +112,13 @@ function MiniCalendar({
         >
           ‹
         </button>
-        <div className="text-sm text-[#e0a200] font-medium">
+        <button
+          onClick={() => selectMonth(viewYear, viewMonth)}
+          className="text-sm text-[#e0a200] font-medium px-2 py-1 rounded hover:bg-[#e0a200]/10 border border-transparent hover:border-[#e0a200]/30"
+          title="Mostrar todo el mes"
+        >
           {monthNameES(viewYear, viewMonth)} {viewYear}
-        </div>
+        </button>
         <button
           onClick={nextMonth}
           className="h-8 w-8 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 inline-flex items-center justify-center"
@@ -114,12 +138,7 @@ function MiniCalendar({
 
       <div className="grid grid-cols-7 gap-1">
         {cells.map((c, i) => {
-          const isSelected =
-            c.day &&
-            viewYear === selY &&
-            viewMonth === selM - 1 &&
-            c.day === selD;
-
+          const isSelected = c.day && viewYear === selY && viewMonth === selM - 1 && c.day === selD;
           return (
             <button
               key={i}
@@ -185,7 +204,11 @@ export default function RegistroIngresosPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [day, setDay] = useState<string>(toISODateInput(new Date()));
+  // Filtros (prioridad: day > month)
+  const [day, setDay] = useState<string>("");     // "YYYY-MM-DD" o ""
+  const [month, setMonth] = useState<string>(""); // "YYYY-MM" o ""
+
+  // Calendario (único)
   const [calOpen, setCalOpen] = useState(false);
   const calBtnRef = useRef<HTMLButtonElement | null>(null);
   const calPopRef = useRef<HTMLDivElement | null>(null);
@@ -232,20 +255,20 @@ export default function RegistroIngresosPage() {
     };
   }, []);
 
-  // Cargar entradas por día
-  async function loadForDay(ymd: string) {
+  // Cargar TODO
+  async function loadAll() {
     try {
       setLoading(true);
       setError("");
-      const { start, end } = dayBoundsCO(ymd);
+      const { start, end } = fullRangeCO();
       const rows = await getEntradasByDateRange(start, end);
       setEntradas(Array.isArray(rows) ? rows : []);
     } catch (e: any) {
       console.error(e);
       setError(
         e?.message?.includes("HTTP")
-          ? `No se pudieron cargar los ingresos del día.\n${e.message}`
-          : "No se pudieron cargar los ingresos del día. Verifica la API o CORS."
+          ? `No se pudieron cargar los ingresos.\n${e.message}`
+          : "No se pudieron cargar los ingresos. Verifica la API o CORS."
       );
     } finally {
       setLoading(false);
@@ -253,14 +276,9 @@ export default function RegistroIngresosPage() {
   }
 
   useEffect(() => {
-    loadForDay(day);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function onPickDate(ymd: string) {
-    setDay(ymd);
-    setCalOpen(false);
-    await loadForDay(ymd);
-  }
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mapas rápidos para productos
   const zapatoMap = useMemo(() => {
@@ -292,9 +310,7 @@ export default function RegistroIngresosPage() {
     }
     if (tipo === "bolso") {
       const b = bolsoMap.get(String(row?.bolso_id));
-      return b
-        ? `${b.nombre ?? "Bolso"}${b.color ? ` — ${b.color}` : ""}`
-        : `Bolso #${row?.bolso_id ?? "?"}`;
+      return b ? `${b.nombre ?? "Bolso"}${b.color ? ` — ${b.color}` : ""}` : `Bolso #${row?.bolso_id ?? "?"}`;
     }
     return "—";
   }
@@ -340,15 +356,30 @@ export default function RegistroIngresosPage() {
     },
   ] as const;
 
-  // 👉 Ocultar "Usuario" si NO es admin (sin useMemo para no congelar renderers)
+  // Ocultar "Usuario" si NO es admin
   const columns = soyAdmin ? baseColumns : baseColumns.slice().filter((c) => c.key !== "usuario");
 
-  // Búsqueda rápida local (usa nombre de usuario, nunca id)
+  // Búsqueda rápida local
   const [q, setQ] = useState("");
+
+  // Paginación local
+  const [pageSize, setPageSize] = useState<number>(15);
+  const [page, setPage] = useState<number>(1);
+
+  // Filtrado local: día (si hay) o mes; luego texto
   const filtered = useMemo(() => {
+    let arr = entradas as any[];
+
+    if (day) {
+      arr = arr.filter((row) => localYMD_CO(row?.fecha) === day);
+    } else if (month) {
+      arr = arr.filter((row) => monthOf(row?.fecha) === month);
+    }
+
     const qlc = q.trim().toLowerCase();
-    if (!qlc) return entradas as any[];
-    return (entradas as any[]).filter((row) => {
+    if (!qlc) return arr;
+
+    return arr.filter((row) => {
       const detalle = renderDetalle(row).toLowerCase();
       const idTxt = String(row?.id ?? "");
       const tipo = String(row?.tipo ?? "").toLowerCase();
@@ -362,7 +393,14 @@ export default function RegistroIngresosPage() {
         talla.includes(qlc)
       );
     });
-  }, [entradas, q, zapatoMap, bolsoMap]);
+  }, [entradas, q, day, month, zapatoMap, bolsoMap]);
+
+  // Paginación
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const pageRows = filtered.slice(startIdx, startIdx + pageSize);
 
   // Eliminar fila
   async function onDeleteRow(row: any) {
@@ -378,9 +416,7 @@ export default function RegistroIngresosPage() {
       console.error(e);
       alert("No se pudo eliminar el ingreso.");
       try {
-        const { start, end } = dayBoundsCO(day);
-        const rows = await getEntradasByDateRange(start, end);
-        setEntradas(Array.isArray(rows) ? rows : []);
+        await loadAll();
       } catch {}
     }
   }
@@ -396,34 +432,37 @@ export default function RegistroIngresosPage() {
         </div>
 
         {/* Acciones superiores */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-center">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_minmax(0,320px)_auto] sm:items-center">
           {/* Buscar */}
           <div className="sm:justify-self-start w-full">
             <div className="flex items-center gap-2 w-full max-w-[380px]">
               <span className="material-symbols-outlined text-[#e0a200] text-[20px]">search</span>
               <input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
                 placeholder="Buscar por detalle, talla, usuario…"
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
               />
             </div>
           </div>
 
-          {/* Fecha (minicalendario) */}
+          {/* Fecha (un solo calendario: día o mes clic en título) */}
           <div className="sm:justify-self-center w-full">
             <div className="relative flex items-center gap-2 w-full max-w-[320px] mx-auto">
-              <span className="text-sm text-[#c2b48d]">Día</span>
+              <span className="text-sm text-[#c2b48d]">Fecha</span>
 
               <button
                 ref={calBtnRef}
                 type="button"
                 onClick={() => setCalOpen((o) => !o)}
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none text-white/90 text-left flex items-center justify-between"
-                title="Selecciona una fecha"
+                title="Selecciona un día o haz clic en el título para filtrar por mes"
               >
                 <span>
-                  {dayNameCO(day)} — {day}
+                  {day ? `Día: ${dayNameCO(day)} — ${day}` : month ? `Mes: ${month}` : "Todos"}
                 </span>
                 <span className="material-symbols-outlined text-[#e0a200]">event</span>
               </button>
@@ -433,8 +472,37 @@ export default function RegistroIngresosPage() {
                   ref={calPopRef}
                   className="absolute z-50 left-0 right-0 top-[44px] flex justify-center"
                 >
-                  <MiniCalendar selectedYMD={day} onSelect={onPickDate} onClose={() => setCalOpen(false)} />
+                  <MiniCalendar
+                    selectedYMD={day || toISODateInput(new Date())}
+                    onSelectDay={(ymd) => {
+                      setDay(ymd);
+                      setMonth("");
+                      setPage(1);
+                      setCalOpen(false);
+                    }}
+                    onSelectMonth={(ym) => {
+                      setMonth(ym);
+                      setDay("");
+                      setPage(1);
+                      setCalOpen(false);
+                    }}
+                    onClose={() => setCalOpen(false)}
+                  />
                 </div>
+              )}
+
+              {(day || month) && (
+                <button
+                  onClick={() => {
+                    setDay("");
+                    setMonth("");
+                    setPage(1);
+                  }}
+                  className="h-10 px-2 rounded-md border border-white/20 text-white hover:bg-white/10"
+                  title="Limpiar filtros"
+                >
+                  Limpiar
+                </button>
               )}
             </div>
           </div>
@@ -455,15 +523,59 @@ export default function RegistroIngresosPage() {
         {loading && <div className="mb-3 text-sm text-white/70">Cargando ingresos…</div>}
         {error && <div className="mb-3 text-sm text-red-400 whitespace-pre-wrap">{error}</div>}
 
-        {/* Tabla */}
+        {/* Tabla (paginada) */}
         <div className="relative overflow-visible">
           <Table2
-            rows={filtered as any}
+            rows={pageRows as any}
             columns={columns as any}
             initialSortKey={"fecha"}
             showActions
             onDelete={(row: any) => onDeleteRow(row)}
           />
+        </div>
+
+        {/* Paginación */}
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-sm text-[#c2b48d]">
+            Mostrando {pageRows.length} de {total} registros
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[#c2b48d]">Por página</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setPageSize(n);
+                setPage(1);
+              }}
+              className="h-9 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none text-white/90"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Anterior
+            </button>
+            <span className="text-sm text-white/80">
+              Página {safePage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Siguiente
+            </button>
+          </div>
         </div>
       </div>
     </AppLayout>

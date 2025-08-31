@@ -709,13 +709,13 @@ export default function InventarioRopa() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-sm text-[#c2b48d] w-24 shrink-0">Cantidad</span>
                       <select
-                        value={qtyFilter}
-                        onChange={(e) => setQtyFilter(e.target.value as "" | "con" | "sin")}
-                        className="h-10 flex-1 min-w-0 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
+                      value={qtyFilter}
+                      onChange={(e) => setQtyFilter(e.target.value as "" | "con" | "sin")}
+                      className="h-10 flex-1 min-w-0 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90"
                       >
-                        <option value="">Todas</option>
-                        <option value="con">Con existencias (&gt; 0)</option>
-                        <option value="sin">Sin existencias (= 0)</option>
+                      <option value="">Todas</option>
+                      <option value="con">Con stock</option>
+                      <option value="sin">Sin stock</option>
                       </select>
                     </div>
 

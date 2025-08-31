@@ -6,38 +6,48 @@ import Table2 from "@/components/ui/table2";
 import Modal from "@/components/ui/Modal";
 import { Qwitcher_Grypen } from "next/font/google";
 import type { Venta } from "@/services/ventas";
-import { getVentasByDateRange, getGanancias, updateVenta, deleteVenta } from "@/services/ventas";
+import { getVentasByDateRange, updateVenta, deleteVenta } from "@/services/ventas";
 import { getCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
 
 const qwitcher = Qwitcher_Grypen({ weight: ["700"], subsets: ["latin"] });
 
+/* ===== Utils ===== */
 function fmtMoney(n?: number) {
   const v = Number(n ?? 0);
   return `$${v.toLocaleString("es-CO", { maximumFractionDigits: 0 })}`;
 }
-function toISODateInput(d: Date) {
-  const pad = (x: number) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+const pad2 = (x: number) => String(x).padStart(2, "0");
 
-// Rango del día en Bogotá -> devuelto en UTC (Z) para evitar corrimientos en la DB
-function dayBoundsCO(ymd: string) {
-    return {
-    start: `${ymd}T00:00:00-05:00`,
-    end:   `${ymd}T23:59:59.999-05:00`,
+// Rango MUY amplio para traer todo
+function fullRangeCO() {
+  return {
+    start: `2000-01-01T00:00:00-05:00`,
+    end: `2100-12-31T23:59:59.999-05:00`,
   };
 }
 
+// Fecha local YYYY-MM-DD en Bogotá
+function localYMD_CO(isoOrDate: string | Date): string {
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if (!d || isNaN(d.getTime())) return "";
+  const yyyy = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", year: "numeric" }).format(d);
+  const mm = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", month: "2-digit" }).format(d);
+  const dd = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit" }).format(d);
+  return `${yyyy}-${mm}-${dd}`;
+}
+function monthOf(isoOrDate: string | Date): string {
+  const ymd = localYMD_CO(isoOrDate);
+  return ymd ? ymd.slice(0, 7) : "";
+}
 
-function dayNameCO(ymd: string) {
-  const dt = new Date(`${ymd}T12:00:00-05:00`); // mediodía para evitar bordes
-  const formatter = new Intl.DateTimeFormat("es-CO", {
-    timeZone: "America/Bogota",
-    weekday: "long",
-  });
-  const name = formatter.format(dt);
-  return name.charAt(0).toUpperCase() + name.slice(1);
+/* ===== MiniCalendario (mismo estilo) ===== */
+function daysInMonth(year: number, monthIdx: number) {
+  return new Date(year, monthIdx + 1, 0).getDate();
+}
+function startWeekday(year: number, monthIdx: number) {
+  // 0=Domingo ... 6=Sábado
+  return new Date(year, monthIdx, 1).getDay();
 }
 function monthNameES(year: number, monthIdx: number) {
   const d = new Date(Date.UTC(year, monthIdx, 1));
@@ -45,31 +55,21 @@ function monthNameES(year: number, monthIdx: number) {
     .format(d)
     .replace(/^\p{Ll}/u, (c) => c.toUpperCase());
 }
-function daysInMonth(year: number, monthIdx: number) {
-  return new Date(year, monthIdx + 1, 0).getDate();
-}
-function startWeekday(year: number, monthIdx: number) {
-  // 0=Domingo ... 6=Sábado (coincide con es-CO)
-  return new Date(year, monthIdx, 1).getDay();
+function toISODateInput(d: Date) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-/**
- * MiniCalendario (popover)
- * - Sin librerías externas
- * - Navegación de mes
- * - Selección de fecha con un clic
- * - Cierra al seleccionar o al hacer clic fuera
- */
 function MiniCalendar({
   selectedYMD,
-  onSelect,
+  onSelectDay,
+  onSelectMonth,
   onClose,
 }: {
   selectedYMD: string;
-  onSelect: (ymd: string) => void;
+  onSelectDay: (ymd: string) => void;
+  onSelectMonth: (ym: string) => void;
   onClose: () => void;
 }) {
-  // estado del mes visible
   const [viewYear, setViewYear] = useState<number>(() => {
     const [y] = selectedYMD.split("-").map((n) => Number(n));
     return Number.isFinite(y) ? y : new Date().getFullYear();
@@ -98,25 +98,25 @@ function MiniCalendar({
     });
   }
   function selectYMD(y: number, mIdx: number, d: number) {
-    const pad = (x: number) => String(x).padStart(2, "0");
-    onSelect(`${y}-${pad(mIdx + 1)}-${pad(d)}`);
+    onSelectDay(`${y}-${pad2(mIdx + 1)}-${pad2(d)}`);
+    onClose();
+  }
+  function selectMonth(y: number, mIdx: number) {
+    onSelectMonth(`${y}-${pad2(mIdx + 1)}`);
     onClose();
   }
   function selectToday() {
     const today = new Date();
     const ymd = toISODateInput(today);
-    // Mover vista a hoy
     setViewYear(today.getFullYear());
     setViewMonth(today.getMonth());
-    onSelect(ymd);
+    onSelectDay(ymd);
     onClose();
   }
 
-  // construir grilla
   const dim = daysInMonth(viewYear, viewMonth);
-  const start = startWeekday(viewYear, viewMonth); // 0..6 (Domingo primero)
+  const start = startWeekday(viewYear, viewMonth);
   const cells: Array<{ day?: number }> = [];
-  // huecos al inicio
   for (let i = 0; i < start; i++) cells.push({});
   for (let d = 1; d <= dim; d++) cells.push({ day: d });
 
@@ -124,7 +124,7 @@ function MiniCalendar({
 
   return (
     <div className="w-[280px] rounded-md bg-black/80 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_10px_30px_rgba(255,234,7,0.12)] p-3">
-      {/* Header con navegación */}
+      {/* Header: ahora es botón para seleccionar el MES completo */}
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={prevMonth}
@@ -133,9 +133,15 @@ function MiniCalendar({
         >
           ‹
         </button>
-        <div className="text-sm text-[#e0a200] font-medium">
+
+        <button
+          onClick={() => selectMonth(viewYear, viewMonth)}
+          className="text-sm text-[#e0a200] font-medium px-2 py-1 rounded hover:bg-[#e0a200]/10 border border-transparent hover:border-[#e0a200]/30"
+          title="Mostrar todo el mes"
+        >
           {monthNameES(viewYear, viewMonth)} {viewYear}
-        </div>
+        </button>
+
         <button
           onClick={nextMonth}
           className="h-8 w-8 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 inline-flex items-center justify-center"
@@ -158,10 +164,7 @@ function MiniCalendar({
       <div className="grid grid-cols-7 gap-1">
         {cells.map((c, i) => {
           const isSelected =
-            c.day &&
-            viewYear === selY &&
-            viewMonth === selM - 1 &&
-            c.day === selD;
+            c.day && viewYear === selY && viewMonth === selM - 1 && c.day === selD;
 
           return (
             <button
@@ -202,18 +205,24 @@ function MiniCalendar({
   );
 }
 
+/* ===== Página ===== */
 export default function RegistroVentasPage() {
   const me = getCurrentUser();
   const soyAdmin = isAdmin(me?.rol);
 
+  // Data
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Día seleccionado (hoy por defecto)
-  const [day, setDay] = useState<string>(toISODateInput(new Date()));
+  // Búsqueda
+  const [q, setQ] = useState("");
 
-  // Popover calendario
+  // Filtros (mutuamente excluyentes en prioridad: day > month)
+  const [month, setMonth] = useState<string>(""); // "YYYY-MM" o ""
+  const [day, setDay] = useState<string>("");     // "YYYY-MM-DD" o ""
+
+  // Calendario (único)
   const [calOpen, setCalOpen] = useState(false);
   const calBtnRef = useRef<HTMLButtonElement | null>(null);
   const calPopRef = useRef<HTMLDivElement | null>(null);
@@ -235,19 +244,11 @@ export default function RegistroVentasPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [calOpen]);
 
-  // Ganancias del día
-  const [gananciasDia, setGananciasDia] = useState<number>(0);
-  const [ganLoading, setGanLoading] = useState<boolean>(false);
+  // Paginación
+  const [pageSize, setPageSize] = useState<number>(15);
+  const [page, setPage] = useState<number>(1);
 
-  // Modal EDITAR (SIN fecha)
-  const [openModal, setOpenModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<{ id?: number; precio: number | ""; observaciones: string }>({
-    precio: "" as "",
-    observaciones: "",
-  });
-
-  // Columnas base (incluye Usuario)
+  // Columnas
   const baseColumns = [
     {
       key: "producto",
@@ -282,34 +283,33 @@ export default function RegistroVentasPage() {
       label: "Fecha",
       className: "max-w-[140px] truncate",
       render: (v: string) => {
-        const dt = v ? new Date(v) : null;
-        if (!dt || isNaN(dt.getTime())) return "—";
-        return dt.toLocaleDateString("es-CO", { timeZone: "America/Bogota" });
+        const ymd = localYMD_CO(v);
+        return ymd || "—";
       },
     },
   ] as const;
 
-  // Columnas finales según rol (si no es admin, ocultar "usuario")
   const columns = useMemo(
     () => (soyAdmin ? baseColumns : (baseColumns.slice() as any[]).filter((c) => c.key !== "usuario")),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [soyAdmin]
   );
 
-  async function loadForDay(ymd: string) {
+  // Cargar TODO
+  async function loadAll() {
     try {
       setLoading(true);
       setError("");
-      const { start, end } = dayBoundsCO(ymd);
-      const [vs, gan] = await Promise.all([getVentasByDateRange(start, end), getGanancias(start, end)]);
+      const { start, end } = fullRangeCO();
+      const vs = await getVentasByDateRange(start, end);
       setVentas(Array.isArray(vs) ? vs : []);
-      setGananciasDia(Number(gan || 0));
+      setPage(1);
     } catch (e: any) {
       console.error(e);
       setError(
         e?.message?.includes("HTTP")
-          ? `No se pudieron cargar las ventas del día.\n${e.message}`
-          : "No se pudieron cargar las ventas del día. Verifica la API o CORS."
+          ? `No se pudieron cargar las ventas.\n${e.message}`
+          : "No se pudieron cargar las ventas. Verifica la API o CORS."
       );
     } finally {
       setLoading(false);
@@ -317,85 +317,23 @@ export default function RegistroVentasPage() {
   }
 
   useEffect(() => {
-    loadForDay(day);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadAll();
   }, []);
 
-  // Al seleccionar fecha en el minicalendario: aplica inmediatamente
-  async function onPickDate(ymd: string) {
-    setDay(ymd);
-    setCalOpen(false);
-    setGanLoading(true);
-    await loadForDay(ymd);
-    setGanLoading(false);
-  }
-
-  // Abrir modal de edición (SIN fecha)
-  function openEdit(row: any) {
-    setForm({
-      id: row.id,
-      precio: Number(row.precio ?? 0),
-      observaciones: String(row.observaciones ?? ""),
-    });
-    setOpenModal(true);
-  }
-
-  async function onDeleteRow(row: any) {
-    if (!row?.id) {
-      alert("La venta no tiene id.");
-      return;
-    }
-    if (!confirm(`¿Eliminar la venta #${row.id}?`)) return;
-    try {
-      setVentas((prev) => prev.filter((v: any) => v.id !== row.id));
-      await deleteVenta(row.id);
-      const { start, end } = dayBoundsCO(day);
-      const gan = await getGanancias(start, end);
-      setGananciasDia(Number(gan || 0));
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo eliminar la venta.");
-      try {
-        const { start, end } = dayBoundsCO(day);
-        const vs = await getVentasByDateRange(start, end);
-        setVentas(Array.isArray(vs) ? vs : []);
-      } catch {}
-    }
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (saving || !form.id) return;
-
-    try {
-      setSaving(true);
-
-      const payload: any = {
-        precio: form.precio === "" ? 0 : Number(form.precio),
-        observaciones: form.observaciones || "",
-      };
-
-      const updated = await updateVenta(form.id, payload);
-      setVentas((prev: any[]) => prev.map((v) => (v.id === updated.id ? updated : v)));
-
-      const { start, end } = dayBoundsCO(day);
-      const gan = await getGanancias(start, end);
-      setGananciasDia(Number(gan || 0));
-      setOpenModal(false);
-    } catch (e: any) {
-      console.error(e);
-      alert(`No se pudo guardar la venta.\n${e?.message || "Error desconocido"}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Búsqueda rápida local (condicionada por rol)
-  const [q, setQ] = useState("");
+  // Filtrado local (prioridad día > mes > texto)
   const filtered = useMemo(() => {
+    let arr = ventas as any[];
+
+    if (day) {
+      arr = arr.filter((v) => localYMD_CO(v?.fecha) === day);
+    } else if (month) {
+      arr = arr.filter((v) => monthOf(v?.fecha) === month);
+    }
+
     const qlc = q.trim().toLowerCase();
-    if (!qlc) return ventas as any[];
-    return (ventas as any[]).filter((v) => {
+    if (!qlc) return arr;
+
+    return arr.filter((v) => {
       const obs = String(v.observaciones ?? "").toLowerCase();
       const idTxt = String(v.id ?? "");
       const prod = String(v.producto ?? v.nombre_producto ?? "").toLowerCase();
@@ -414,27 +352,95 @@ export default function RegistroVentasPage() {
         return obs.includes(qlc) || idTxt.includes(qlc) || prod.includes(qlc) || talla.includes(qlc);
       }
     });
-  }, [ventas, q, soyAdmin]);
+  }, [ventas, q, soyAdmin, day, month]);
+
+  // Paginación
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const pageRows = filtered.slice(startIdx, startIdx + pageSize);
+
+  // Acciones
+  function openEdit(row: any) {
+    setForm({
+      id: row.id,
+      precio: Number(row.precio ?? 0),
+      observaciones: String(row.observaciones ?? ""),
+    });
+    setOpenModal(true);
+  }
+
+  async function onDeleteRow(row: any) {
+    if (!row?.id) {
+      alert("La venta no tiene id.");
+      return;
+    }
+    if (!confirm(`¿Eliminar la venta #${row.id}?`)) return;
+    try {
+      setVentas((prev) => prev.filter((v: any) => v.id !== row.id));
+    } catch (e) {
+      console.error(e);
+      alert("No se pudo eliminar la venta.");
+    } finally {
+      try {
+        await deleteVenta(row.id);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  const [saving, setSaving] = useState(false);
+  const [openModal, setOpenModal] = useState(false);
+  const [form, setForm] = useState<{ id?: number; precio: number | ""; observaciones: string }>({
+    precio: "" as "",
+    observaciones: "",
+  });
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving || !form.id) return;
+
+    try {
+      setSaving(true);
+      const payload: any = {
+        precio: form.precio === "" ? 0 : Number(form.precio),
+        observaciones: form.observaciones || "",
+      };
+      const updated = await updateVenta(form.id, payload);
+      setVentas((prev: any[]) => prev.map((v) => (v.id === updated.id ? updated : v)));
+      setOpenModal(false);
+    } catch (e: any) {
+      console.error(e);
+      alert(`No se pudo guardar la venta.\n${e?.message || "Error desconocido"}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto px-4 py-6">
-        {/* Título centrado */}
+        {/* Título */}
         <div className="mb-6 flex items-center justify-center">
           <h1 className={`${qwitcher.className} text-[#e0a200] text-6xl sm:text-8xl leading-none text-center`}>
             Ventas
           </h1>
         </div>
 
-        {/* Acciones superiores (buscador + fecha + botón agregar) */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-center">
+        {/* Acciones: búsqueda + calendario único + limpiar filtros + agregar */}
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_minmax(0,360px)_auto] sm:items-center">
           {/* Buscar */}
           <div className="sm:justify-self-start w-full">
             <div className="flex items-center gap-2 w-full max-w-[380px]">
               <span className="material-symbols-outlined text-[#e0a200] text-[20px]">search</span>
               <input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
                 placeholder={
                   soyAdmin
                     ? "Buscar por producto, talla, usuario, #id u observaciones…"
@@ -445,20 +451,24 @@ export default function RegistroVentasPage() {
             </div>
           </div>
 
-          {/* Fecha (minicalendario) */}
-          <div className="sm:justify-self-center w-full">
-            <div className="relative flex items-center gap-2 w-full max-w-[320px] mx-auto">
-              <span className="text-sm text-[#c2b48d]">Día</span>
+          {/* Calendario (único) + chips de filtro */}
+          <div className="w-full">
+            <div className="relative flex items-center gap-2 w-full max-w-[360px] mx-auto">
+              <span className="text-sm text-[#c2b48d]">Fecha</span>
 
               <button
                 ref={calBtnRef}
                 type="button"
                 onClick={() => setCalOpen((o) => !o)}
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none text-white/90 text-left flex items-center justify-between"
-                title="Selecciona una fecha"
+                title="Selecciona día o mes (clic en el título para mes)"
               >
                 <span>
-                  {dayNameCO(day)} — {day}
+                  {day
+                    ? `Día: ${day}`
+                    : month
+                    ? `Mes: ${month}`
+                    : "Todos"}
                 </span>
                 <span className="material-symbols-outlined text-[#e0a200]">event</span>
               </button>
@@ -469,11 +479,34 @@ export default function RegistroVentasPage() {
                   className="absolute z-50 left-0 right-0 top-[44px] flex justify-center"
                 >
                   <MiniCalendar
-                    selectedYMD={day}
-                    onSelect={onPickDate}
+                    selectedYMD={day || toISODateInput(new Date())}
+                    onSelectDay={(ymd) => {
+                      setDay(ymd);
+                      setMonth("");   // prioridad al día
+                      setPage(1);
+                    }}
+                    onSelectMonth={(ym) => {
+                      setMonth(ym);
+                      setDay("");     // prioridad al mes si no hay día
+                      setPage(1);
+                    }}
                     onClose={() => setCalOpen(false)}
                   />
                 </div>
+              )}
+
+              {(day || month) && (
+                <button
+                  onClick={() => {
+                    setDay("");
+                    setMonth("");
+                    setPage(1);
+                  }}
+                  className="h-10 px-2 rounded-md border border-white/20 text-white hover:bg-white/10"
+                  title="Limpiar filtros"
+                >
+                  Limpiar
+                </button>
               )}
             </div>
           </div>
@@ -490,26 +523,14 @@ export default function RegistroVentasPage() {
           </div>
         </div>
 
-        {/* Ganancias del día */}
-        <div className="mb-4 grid grid-cols-1 gap-3">
-          <div className="rounded-xl bg-black/70 backdrop-blur-[10px] border border-[#e0a200]/30 shadow-[0_2px_10px_rgba(255,234,7,0.08)] p-4">
-            <div className="text-sm text-[#c2b48d]">
-              Ganancias del día — {dayNameCO(day)} ({day})
-            </div>
-            <div className="mt-1 text-2xl text-[#e0a200]">
-              {ganLoading ? "Calculando…" : fmtMoney(gananciasDia)}
-            </div>
-          </div>
-        </div>
-
         {/* Estado */}
         {loading && <div className="mb-3 text-sm text-white/70">Cargando ventas…</div>}
         {error && <div className="mb-3 text-sm text-red-400 whitespace-pre-wrap">{error}</div>}
 
-        {/* Tabla */}
+        {/* Tabla (paginada) */}
         <div className="relative overflow-visible">
           <Table2
-            rows={filtered as any}
+            rows={pageRows as any}
             columns={columns as any}
             initialSortKey={"fecha"}
             showActions
@@ -517,9 +538,53 @@ export default function RegistroVentasPage() {
             onDelete={(row: any) => onDeleteRow(row)}
           />
         </div>
+
+        {/* Paginación */}
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-sm text-[#c2b48d]">
+            Mostrando {pageRows.length} de {total} registros
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[#c2b48d]">Por página</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setPageSize(n);
+                setPage(1);
+              }}
+              className="h-9 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none text-white/90"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Anterior
+            </button>
+            <span className="text-sm text-white/80">
+              Página {safePage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Modal: SOLO editar (sin fecha) */}
+      {/* Modal: editar (sin fecha) */}
       <Modal
         open={openModal}
         onClose={() => setOpenModal(false)}

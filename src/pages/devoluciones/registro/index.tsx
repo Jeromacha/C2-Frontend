@@ -1,3 +1,4 @@
+// src/pages/devoluciones/registro/index.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AppLayout from "@/components/layout/AppLayout";
@@ -52,18 +53,43 @@ function startWeekday(year: number, monthIdx: number) {
   return new Date(year, monthIdx, 1).getDay();
 }
 
+// ✅ NUEVO: rango amplio para traer TODO sin depender de un día
+function fullRangeCO() {
+  return {
+    start: `2000-01-01T00:00:00-05:00`,
+    end: `2100-12-31T23:59:59.999-05:00`,
+  };
+}
+
+// ✅ NUEVO: helpers para filtrar localmente por día/mes en horario Bogotá
+function localYMD_CO(isoOrDate: string | Date): string {
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if (!d || isNaN(d.getTime())) return "";
+  const yyyy = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", year: "numeric" }).format(d);
+  const mm = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", month: "2-digit" }).format(d);
+  const dd = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "2-digit" }).format(d);
+  return `${yyyy}-${mm}-${dd}`;
+}
+function monthOf(isoOrDate: string | Date): string {
+  const ymd = localYMD_CO(isoOrDate);
+  return ymd ? ymd.slice(0, 7) : "";
+}
+
 // Catálogos para resolver nombres si recibimos id
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
 const apiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
 
 // ===== Mini calendario =====
+// (mismo estilo; ahora el título del calendario es “clickable” para seleccionar el MES)
 function MiniCalendar({
   selectedYMD,
-  onSelect,
+  onSelectDay,
+  onSelectMonth,
   onClose,
 }: {
   selectedYMD: string;
-  onSelect: (ymd: string) => void;
+  onSelectDay: (ymd: string) => void;
+  onSelectMonth: (ym: string) => void;
   onClose: () => void;
 }) {
   const [viewYear, setViewYear] = useState<number>(() => {
@@ -83,12 +109,17 @@ function MiniCalendar({
   }
   function selectYMD(y: number, mIdx: number, d: number) {
     const pad = (x: number) => String(x).padStart(2, "0");
-    onSelect(`${y}-${pad(mIdx + 1)}-${pad(d)}`);
+    onSelectDay(`${y}-${pad(mIdx + 1)}-${pad(d)}`);
+    onClose();
+  }
+  function selectMonth(y: number, mIdx: number) {
+    const pad = (x: number) => String(x).padStart(2, "0");
+    onSelectMonth(`${y}-${pad(mIdx + 1)}`);
     onClose();
   }
   function selectToday() {
     const today = new Date();
-    onSelect(toISODateInput(today));
+    onSelectDay(toISODateInput(today));
     onClose();
   }
 
@@ -110,9 +141,14 @@ function MiniCalendar({
         >
           ‹
         </button>
-        <div className="text-sm text-[#e0a200] font-medium">
+        {/* ✅ Título clickable para seleccionar TODO el mes */}
+        <button
+          onClick={() => selectMonth(viewYear, viewMonth)}
+          className="text-sm text-[#e0a200] font-medium px-2 py-1 rounded hover:bg-[#e0a200]/10 border border-transparent hover:border-[#e0a200]/30"
+          title="Mostrar todo el mes"
+        >
           {monthNameES(viewYear, viewMonth)} {viewYear}
-        </div>
+        </button>
         <button
           onClick={nextMonth}
           className="h-8 w-8 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 inline-flex items-center justify-center"
@@ -295,8 +331,13 @@ export default function RegistroDevolucionesPage() {
   const [rows, setRows] = useState<Devolucion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [day, setDay] = useState<string>(toISODateInput(new Date()));
 
+  // ✅ Cambios: filtros y paginación
+  // - day y month son filtros locales (prioridad: day > month)
+  const [day, setDay] = useState<string>("");      // "YYYY-MM-DD" o ""
+  const [month, setMonth] = useState<string>("");  // "YYYY-MM" o ""
+
+  // Popover calendario (uno solo)
   const [calOpen, setCalOpen] = useState(false);
   const calBtnRef = useRef<HTMLButtonElement | null>(null);
   const calPopRef = useRef<HTMLDivElement | null>(null);
@@ -351,7 +392,7 @@ export default function RegistroDevolucionesPage() {
     return z ? `${z.nombre}${z.color ? ` — ${z.color}` : ""}` : undefined;
   }
 
-  // ✅ NUEVO: catálogo de bolsos para resolver id → nombre/color
+  // Catálogo de bolsos
   type BolsoItem = { id: string; nombre: string; color?: string };
   const [bolsos, setBolsos] = useState<BolsoItem[]>([]);
   useEffect(() => {
@@ -381,7 +422,7 @@ export default function RegistroDevolucionesPage() {
   const toggleExpanded = (id: number) =>
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  // ===== Columnas =====
+  // ===== Columnas (sin cambios visuales/estructura) =====
   const baseColumns = [
     {
       key: "entregado",
@@ -437,7 +478,6 @@ export default function RegistroDevolucionesPage() {
       label: "Recibido (devuelto)",
       className: "max-w-[320px] truncate",
       render: (_: any, r: any) => {
-        // Mostrar NOMBRE + (color) + talla del recibido.
         let prod = r.producto_recibido ?? r.producto ?? r.nombre_producto ?? "";
         const talla = String(r.talla_recibida ?? r.talla ?? "").trim();
         const isZapId = /^\d+$/.test(String(prod));
@@ -477,15 +517,15 @@ export default function RegistroDevolucionesPage() {
     },
   ] as const;
 
-  // 👉 columnas finales según rol (sin useMemo para no “congelar” renderers)
   const columns = soyAdmin ? baseColumns : [...baseColumns].filter((c) => c.key !== "usuario");
 
   // ===== Data load =====
-  async function loadForDay(ymd: string) {
+  // En lugar de cargar por día, cargamos TODO y filtramos localmente
+  async function loadAll() {
     try {
       setLoading(true);
       setError("");
-      const { start, end } = dayBoundsCO(ymd);
+      const { start, end } = fullRangeCO();
       const data = await getDevolucionesByDateRange(start, end);
       setRows(Array.isArray(data) ? data : []);
     } catch (e: any) {
@@ -501,16 +541,57 @@ export default function RegistroDevolucionesPage() {
   }
 
   useEffect(() => {
-    loadForDay(day);
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function onPickDate(ymd: string) {
-    setDay(ymd);
-    setCalOpen(false);
-    await loadForDay(ymd);
-  }
+  // Búsqueda local
+  const [q, setQ] = useState("");
 
+  // ✅ NUEVO: paginación local
+  const [pageSize, setPageSize] = useState<number>(15);
+  const [page, setPage] = useState<number>(1);
+
+  // ✅ NUEVO: filtrado local por día (si hay) o por mes (si no hay día)
+  const filtered = useMemo(() => {
+    let arr = rows as any[];
+
+    if (day) {
+      arr = arr.filter((r) => localYMD_CO(r?.fecha) === day);
+    } else if (month) {
+      arr = arr.filter((r) => monthOf(r?.fecha) === month);
+    }
+
+    const qlc = q.trim().toLowerCase();
+    if (!qlc) return arr;
+
+    return arr.filter((r) => {
+      const campos = [
+        r.producto_recibido ?? r.producto ?? r.nombre_producto ?? "",
+        r.color_recibido ?? r.color ?? "",
+        r.talla_recibida ?? r.talla ?? "",
+        r.producto_entregado ?? "",
+        r.color_entregado ?? "",
+        r.talla_entregada ?? "",
+        r?.usuario?.nombre ?? r?.usuario_nombre ?? r?.usuario_id ?? "",
+        r.id ?? "",
+        r.observaciones ?? "",
+      ]
+        .filter(Boolean)
+        .map((x: any) => String(x).toLowerCase());
+
+      return campos.some((c: string) => c.includes(qlc));
+    });
+  }, [rows, q, day, month]);
+
+  // Paginación
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const pageRows = filtered.slice(startIdx, startIdx + pageSize);
+
+  // Acciones
   function openEdit(row: any) {
     setForm({
       id: row.id,
@@ -532,9 +613,8 @@ export default function RegistroDevolucionesPage() {
       console.error(e);
       alert("No se pudo eliminar la devolución.");
       try {
-        const { start, end } = dayBoundsCO(day);
-        const data = await getDevolucionesByDateRange(start, end);
-        setRows(Array.isArray(data) ? data : []);
+        // Antes recargábamos por día; ahora recargamos TODO para mantener consistencia
+        await loadAll();
       } catch {}
     }
   }
@@ -557,31 +637,6 @@ export default function RegistroDevolucionesPage() {
     }
   }
 
-  // ===== Búsqueda local =====
-  const [q, setQ] = useState("");
-  const filtered = useMemo(() => {
-    const qlc = q.trim().toLowerCase();
-    if (!qlc) return rows as any[];
-
-    return (rows as any[]).filter((r) => {
-      const campos = [
-        r.producto_recibido ?? r.producto ?? r.nombre_producto ?? "",
-        r.color_recibido ?? r.color ?? "",
-        r.talla_recibida ?? r.talla ?? "",
-        r.producto_entregado ?? "",
-        r.color_entregado ?? "",
-        r.talla_entregada ?? "",
-        r?.usuario?.nombre ?? r?.usuario_nombre ?? r?.usuario_id ?? "",
-        r.id ?? "",
-        r.observaciones ?? "",
-      ]
-        .filter(Boolean)
-        .map((x: any) => String(x).toLowerCase());
-
-      return campos.some((c: string) => c.includes(qlc));
-    });
-  }, [rows, q]);
-
   // ===== Render =====
   return (
     <AppLayout>
@@ -592,47 +647,79 @@ export default function RegistroDevolucionesPage() {
           </h1>
         </div>
 
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-center">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_minmax(0,320px)_auto] sm:items-center">
           {/* Buscar */}
           <div className="sm:justify-self-start w-full">
             <div className="flex items-center gap-2 w-full max-w-[380px]">
               <span className="material-symbols-outlined text-[#e0a200] text-[20px]">search</span>
               <input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
                 placeholder="Buscar por producto, talla, usuario, #id u observaciones…"
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none focus:ring-2 focus:ring-[#e0a200]/40 text-white/90 placeholder:text-white/50"
               />
             </div>
           </div>
 
-          {/* Fecha */}
+          {/* Fecha: un solo calendario (día o mes con clic en el título) */}
           <div className="sm:justify-self-center w-full">
             <div className="relative flex items-center gap-2 w-full max-w-[320px] mx-auto">
-              <span className="text-sm text-[#c2b48d]">Día</span>
+              <span className="text-sm text-[#c2b48d]">Fecha</span>
               <button
                 ref={calBtnRef}
                 type="button"
                 onClick={() => setCalOpen((o) => !o)}
                 className="h-10 w-full rounded-md bg-black/60 border border-[#e0a200]/30 px-3 outline-none text-white/90 text-left flex items-center justify-between"
-                title="Selecciona una fecha"
+                title="Selecciona un día o haz clic en el título para filtrar por mes"
               >
                 <span>
-                  {dayNameCO(day)} — {day}
+                  {day
+                    ? `Día: ${dayNameCO(day)} — ${day}`
+                    : month
+                    ? `Mes: ${month}`
+                    : "Todos"}
                 </span>
                 <span className="material-symbols-outlined text-[#e0a200]">event</span>
               </button>
               {calOpen && (
                 <div
                   ref={calPopRef}
-                  className="absolute z-50 left-0 right-0 top={44px} flex justify-center"
+                  className="absolute z-50 left-0 right-0 top-[44px] flex justify-center"
                 >
                   <MiniCalendar
-                    selectedYMD={day}
-                    onSelect={onPickDate}
+                    selectedYMD={day || toISODateInput(new Date())}
+                    onSelectDay={(ymd) => {
+                      setDay(ymd);
+                      setMonth("");
+                      setPage(1);
+                      setCalOpen(false);
+                    }}
+                    onSelectMonth={(ym) => {
+                      setMonth(ym);
+                      setDay("");
+                      setPage(1);
+                      setCalOpen(false);
+                    }}
                     onClose={() => setCalOpen(false)}
                   />
                 </div>
+              )}
+
+              {(day || month) && (
+                <button
+                  onClick={() => {
+                    setDay("");
+                    setMonth("");
+                    setPage(1);
+                  }}
+                  className="h-10 px-2 rounded-md border border-white/20 text-white hover:bg-white/10"
+                  title="Limpiar filtros"
+                >
+                  Limpiar
+                </button>
               )}
             </div>
           </div>
@@ -653,16 +740,60 @@ export default function RegistroDevolucionesPage() {
         {loading && <div className="mb-3 text-sm text-white/70">Cargando devoluciones…</div>}
         {error && <div className="mb-3 text-sm text-red-400 whitespace-pre-wrap">{error}</div>}
 
-        {/* Tabla */}
+        {/* Tabla (paginada) */}
         <div className="relative overflow-visible">
           <Table2
-            rows={filtered as any}
+            rows={pageRows as any}
             columns={columns as any}
             initialSortKey={"fecha"}
             showActions
             onEdit={(row: any) => openEdit(row)}
             onDelete={(row: any) => onDeleteRow(row)}
           />
+        </div>
+
+        {/* Controles de paginación */}
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-sm text-[#c2b48d]">
+            Mostrando {pageRows.length} de {total} registros
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[#c2b48d]">Por página</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setPageSize(n);
+                setPage(1);
+              }}
+              className="h-9 rounded-md bg-black/60 border border-[#e0a200]/30 px-2 outline-none text-white/90"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Anterior
+            </button>
+            <span className="text-sm text-white/80">
+              Página {safePage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="h-9 px-3 rounded-md border border-[#e0a200]/30 text-[#e0a200] hover:bg-[#e0a200]/10 disabled:opacity-50"
+            >
+              Siguiente
+            </button>
+          </div>
         </div>
       </div>
 

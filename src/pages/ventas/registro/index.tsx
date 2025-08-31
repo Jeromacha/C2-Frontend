@@ -23,15 +23,12 @@ function toISODateInput(d: Date) {
 
 // Rango del día en Bogotá -> devuelto en UTC (Z) para evitar corrimientos en la DB
 function dayBoundsCO(ymd: string) {
-  // Interpretamos el comienzo y final del día *en Bogotá*
-  const startLocal = new Date(`${ymd}T00:00:00-05:00`);
-  const endLocal = new Date(`${ymd}T23:59:59.999-05:00`);
-  // Enviamos en UTC a la API (Z) para que el backend compare correctamente
-  return {
-    start: startLocal.toISOString(),
-    end: endLocal.toISOString(),
+    return {
+    start: `${ymd}T00:00:00-05:00`,
+    end:   `${ymd}T23:59:59.999-05:00`,
   };
 }
+
 
 function dayNameCO(ymd: string) {
   const dt = new Date(`${ymd}T12:00:00-05:00`); // mediodía para evitar bordes
